@@ -268,6 +268,7 @@ def check_uci_defaults():
         "core_type": "Meta", "core_version": "linux-arm64",
         "github_address_mod": "https://testingcf.jsdelivr.net/", "enable_geoip_dat": "1",
         "custom_fakeip_filter": "1", "skip_proxy_address": "1",
+        "enable_custom_dns": "1", "custom_name_policy": "1",
         "enable_meta_sniffer": "1", "enable_meta_sniffer_pure_ip": "1",
         "geo_auto_update": "1", "geoip_auto_update": "1", "geosite_auto_update": "1",
         "geoasn_auto_update": "1", "chnr_auto_update": "1",
