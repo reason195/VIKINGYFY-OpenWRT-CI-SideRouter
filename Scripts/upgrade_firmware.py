@@ -3,8 +3,11 @@
 #
 # upgrade_firmware.py — 一键下载 GitHub latest release 的 sysupgrade 固件、校验 sha256、sysupgrade 刷入。
 #
+# 选版规则：连上路由器后按 /etc/buffy-version 推出的「本机 CI 分支前缀」选 release，
+# 不会把旁路由刷回 main 的主路由镜像（反之亦然）。显式 --tag 可跨分支，会打印警告。
+#
 # 用法：
-#   python3 Scripts/upgrade_firmware.py                     # 默认 192.168.1.1 root/root，不保留配置刷机（sysupgrade -n）
+#   python3 Scripts/upgrade_firmware.py                     # 默认 192.168.1.2 root/root（旁路由），不保留配置刷机（sysupgrade -n）
 #   python3 Scripts/upgrade_firmware.py --dry-run           # 只下载+校验，不连路由器、不刷机
 #   python3 Scripts/upgrade_firmware.py --yes               # 不保留配置刷机（sysupgrade -n），跳过确认
 #   python3 Scripts/upgrade_firmware.py --keep-config       # 改回保留配置升级（/etc 覆盖层不清空）
@@ -40,7 +43,9 @@ try:
 except Exception:
     pass
 
-DEFAULT_REPO = "reason195/VIKINGYFY-OpenWRT-CI"
+DEFAULT_REPO = "reason195/VIKINGYFY-OpenWRT-CI-SideRouter"
+# 宽松前缀：只用于 --dry-run 和显式 --tag 的场景。连上路由器后一律改用「本机分支前缀」
+# （由 /etc/buffy-version 剥掉日期得到），见 running_prefix()。
 DEFAULT_TAG_PREFIX = "IPQ60XX-WIFI-NO-"
 DEFAULT_DEVICE = "jdcloud_re-cs-07"  # release 资产文件名中的设备段
 DEFAULT_BOARD = "jdcloud,re-cs-07"   # 路由器 /tmp/sysinfo/board_name
@@ -87,6 +92,23 @@ def fetch_releases(repo):
         req.add_header("Authorization", f"token {token}")
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
+
+
+DATE_TAIL_RE = re.compile(r"\d{2}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}$")
+
+
+def running_prefix(running_tag):
+    """由路由器上的 /etc/buffy-version 剥掉尾部日期，得到本机所属 release 前缀。
+
+    tag 形如 IPQ60XX-WIFI-NO-VIKINGYFY-main-<CI分支>-<YY.MM.DD-HH.MM.SS>；CI 分支名自身可含
+    '-'（feat/side-router-optimization），所以只能按日期格式剥尾、不能按段数截取，且必须保留
+    日期前那个 '-'——资产名由 tag 去掉前缀后的剩余段拼接，多吃一个横杠会拼成 sysupgrade--日期。
+    标识缺失或格式不符返回 None（调用方据此拒绝自动选版）。
+    """
+    t = (running_tag or "").strip()
+    if not DATE_TAIL_RE.search(t):
+        return None
+    return DATE_TAIL_RE.sub("", t)
 
 
 def pick_asset(releases, tag, tag_prefix, device):
@@ -305,11 +327,12 @@ def run_verify(host, user, password):
 
 def main():
     ap = argparse.ArgumentParser(description="一键下载 GitHub latest release 固件并 sysupgrade 刷入")
-    ap.add_argument("--host", default=os.environ.get("ROUTER_HOST", "192.168.1.1"))
+    ap.add_argument("--host", default=os.environ.get("ROUTER_HOST", "192.168.1.2"))
     ap.add_argument("--user", default=os.environ.get("ROUTER_USER", "root"))
     ap.add_argument("--password", default=os.environ.get("ROUTER_PASSWORD", "root"))
     ap.add_argument("--repo", default=os.environ.get("UPGRADE_REPO", DEFAULT_REPO))
-    ap.add_argument("--tag-prefix", default=DEFAULT_TAG_PREFIX, help="release 标签前缀（默认 IPQ60XX-WIFI-NO-）")
+    ap.add_argument("--tag-prefix", default=DEFAULT_TAG_PREFIX,
+                    help="release 标签前缀；仅 --dry-run 或显式 --tag 时生效，连上路由器后会收紧为本机分支前缀")
     ap.add_argument("--tag", default=None, help="指定 release 标签（默认取最新匹配前缀的 release）")
     ap.add_argument("--device", default=DEFAULT_DEVICE, help="release 资产文件名中的设备段")
     ap.add_argument("--board", default=DEFAULT_BOARD, help="路由器 /tmp/sysinfo/board_name（刷机前校验）")
@@ -357,6 +380,36 @@ def main():
             log(f"ERROR: 设备不匹配（期望 {args.board}，实际 {board}），拒绝刷入！")
             cli.close()
             return 1
+
+        # 分支隔离：仓库里现在同时有主路由(main)与旁路由分支的 release，两者网络角色互斥
+        # （登录地址、DHCP 开关、wan 口归属会整体互换）。按路由器自身的构建标识选版，
+        # 一键升级就不会把旁路由刷回主路由（或反过来）。
+        run_tag, _ = ssh_run(cli, "cat /etc/buffy-version 2>/dev/null")
+        want = running_prefix(run_tag)
+        if want:
+            if not rel["tag_name"].startswith(want):
+                log(f"  本机分支前缀：{want}；候选 {rel['tag_name']} 属于其它分支")
+                if args.tag:
+                    log("  ⚠️ 按 --tag 跨分支刷机：本机网络角色配置会被整体替换")
+                else:
+                    rel, asset = pick_asset(releases, None, want, args.device)
+                    if not rel:
+                        log(f"ERROR: 分支 {want} 下没有可用 release（该分支可能还没构建过）")
+                        cli.close()
+                        return 2
+                    expected = parse_digest(asset)
+                    if not expected:
+                        log("ERROR: 改选的资产无 GitHub digest（sha256），无法校验，拒绝刷入")
+                        cli.close()
+                        return 2
+                    log(f"  已改选同分支 release：{rel['tag_name']}（{asset['name']}）")
+                    log(f"  sha256  : {expected}")
+        elif not args.tag:
+            log("ERROR: 路由器上读不到有效构建标识（/etc/buffy-version="
+                f"{(run_tag or '').strip() or '空'}），判断不出本机属于哪个分支，拒绝自动选版。\n"
+                "        确要刷机请显式指定：--tag <属于本机分支的 release 标签>")
+            cli.close()
+            return 2
 
     with tempfile.TemporaryDirectory(prefix="fwupgrade-") as tmp:
         local = os.path.join(tmp, asset["name"])

@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 VIKINGYFY
 
-# health_check.sh - 路由器全面体检（非 OpenClash 项）
-# 检查：WAN 连通性(IPv4/IPv6) / DNS 解析 / DDNS 域名 / Let's Encrypt 证书 /
-#       dnsmasq 备用上游 / 防火墙 IPv6 放行 + wan forward=DROP / 硬件流量卸载。
+# health_check.sh - 路由器全面体检（非 OpenClash 项，旁路由形态）
+# 检查：出口连通性(IPv4 经主路由) / DNS 解析 / Let's Encrypt 证书 /
+#       dnsmasq 备用上游 / 防火墙转发链路(lan forward + ip_forward + rp_filter) / 硬件流量卸载。
 # 用法：手动 /usr/share/buffy/health_check.sh，或每日 cron（见 /etc/crontabs/root）。
 # 任一 FAIL：退出码非 0 并推 ntfy/Telegram 告警；日志：/tmp/health_check.log
 
@@ -23,7 +23,7 @@ warn(){ REPORT="${REPORT}[WARN] $1\n"; log "[WARN] $1"; echo "[WARN] $1"; }
 
 log "=== health_check: start ==="
 
-# ---- 1. WAN 连通性 ----
+# ---- 1. 出口连通性（旁路由：本机不拨号，一切经主路由） ----
 if ip -4 route show default 2>/dev/null | grep -q 'default'; then
 	ok "IPv4 默认路由存在"
 	GW=$(ip -4 route show default 2>/dev/null | awk '/default/ {print $3; exit}')
@@ -42,42 +42,12 @@ else
 	bad "公网 IPv4 不可达"
 fi
 
-if ip -6 addr show scope global 2>/dev/null | grep -q 'inet6'; then
-	ok "已获取公网 IPv6 地址"
+# 旁路由无 wan/wan6，也不发 RA；且内核在 forwarding=1 时不再采纳 RA，本机通常拿不到全局
+# IPv6 地址与 v6 默认路由。客户端 IPv6 由主路由直接下发、不经本机，故只观测、不判失败。
+if ip -6 route show default 2>/dev/null | grep -q default; then
+	ok "本机存在 IPv6 默认路由"
 else
-	warn "未获取公网 IPv6 地址（wan6 可能未拨上）"
-fi
-
-# IPv6 可达性必须显式指定全局源地址：本机 IPv6 默认路由全是 "default from <prefix>" 源路由
-# （无裸 default），不指定源会被判 Network unreachable，产生假阳性。先取 WAN 全局地址做源。
-WAN6=""
-for _dev in pppoe-wan wan6 wan; do
-	WAN6=$(ip -6 addr show dev "$_dev" scope global 2>/dev/null | awk '/inet6/{print $2; exit}' | cut -d/ -f1)
-	[ -n "$WAN6" ] && break
-done
-if [ -n "$WAN6" ] && ping -6 -c 2 -W 3 -I "$WAN6" 2400:3200::1 >/dev/null 2>&1; then
-	ok "公网 IPv6 可达 (2400:3200::1, 源 ${WAN6%%:*})"
-elif [ -n "$WAN6" ] && ping -6 -c 2 -W 3 -I "$WAN6" 2001:4860:4860::8888 >/dev/null 2>&1; then
-	ok "公网 IPv6 可达 (2001:4860:4860::8888, 源 ${WAN6%%:*})"
-else
-	warn "公网 IPv6 不可达（源:${WAN6:-无全局地址}）"
-fi
-
-# LAN 客户端 IPv6 出网：用 br-lan 全局地址做源 ping 外部目标。局域网设备走的是
-# "default from <委托前缀>" 源路由，与路由器自身 WAN 源路由不同——单独验证避免漏报。
-LAN6=""
-for _dev in br-lan lan; do
-	LAN6=$(ip -6 addr show dev "$_dev" scope global 2>/dev/null | awk '/inet6/{print $2; exit}' | cut -d/ -f1)
-	[ -n "$LAN6" ] && break
-done
-if [ -z "$LAN6" ]; then
-	warn "无 LAN 全局 IPv6 地址，跳过客户端出网检测"
-elif ping -6 -c 2 -W 3 -I "$LAN6" 2400:3200::1 >/dev/null 2>&1; then
-	ok "LAN 客户端 IPv6 出网可达 (2400:3200::1, 源 ${LAN6%%:*})"
-elif ping -6 -c 2 -W 3 -I "$LAN6" 2001:4860:4860::8888 >/dev/null 2>&1; then
-	ok "LAN 客户端 IPv6 出网可达 (2001:4860:4860::8888, 源 ${LAN6%%:*})"
-else
-	bad "LAN 客户端 IPv6 出网不可达（源 ${LAN6%%:*}）"
+	warn "本机无 IPv6 默认路由（旁路由预期：客户端 IPv6 走主路由，不经本机）"
 fi
 
 if resolve www.baidu.com 223.5.5.5; then
@@ -86,13 +56,10 @@ else
 	bad "DNS 解析失败 (223.5.5.5)"
 fi
 
-# ---- 2. DDNS 域名 + Let's Encrypt 证书 ----
-if resolve "$DOMAIN"; then
-	ok "DDNS 域名可解析 ($DOMAIN)"
-else
-	bad "DDNS 域名解析失败 ($DOMAIN)"
-fi
-
+# ---- 2. Let's Encrypt 证书 ----
+# DDNS 已从固件移除（旁路由不是边缘设备，公网地址发布不归本机）。acme 走 DNS-01，
+# 只写 _acme-challenge 的 TXT 记录、不依赖域名的 A/AAAA，因此签发与续期照常成立；
+# 域名当前是否解析到本网络，本脚本不再检测。
 if [ -f "$LEAF" ]; then
 	if cert_expires_within "$LEAF" 1209600; then
 		bad "LE 证书临期/过期（剩余 <=14 天）"
@@ -132,31 +99,47 @@ else
 	bad "本地 DNS 解析失败 (127.0.0.1)"
 fi
 
-# ---- 4. 防火墙 IPv6 放行 + wan forward ----
-if nft list ruleset 2>/dev/null | grep -q 'Allow-WAN-SSH-v6'; then
-	ok "IPv6 WAN SSH 放行规则存在"
+# ---- 4. 防火墙转发链路（旁路由） ----
+# 旁路由形态下没有 wan/wan6 接口，但防火墙包默认生成的 wan 区域仍写着 network 'wan wan6'。
+# 这种悬空引用会让 fw4 拒绝加载整张表——连 lan 转发一起失效，客户端全断且无明显报错。
+# 92-buffy-firewall.sh 负责清除，这里验证清除结果与转发是否真的就位。
+if nft list table inet fw4 >/dev/null 2>&1; then
+	ok "fw4 nft 表已加载"
 else
-	bad "IPv6 WAN SSH 放行规则缺失"
-fi
-if nft list ruleset 2>/dev/null | grep -q 'Allow-WAN-LuCI-v6'; then
-	ok "IPv6 WAN LuCI 放行规则存在"
-else
-	bad "IPv6 WAN LuCI 放行规则缺失"
+	bad "fw4 nft 表缺失（防火墙未运行 / 配置加载失败）"
 fi
 
-FORWARD=""
+LAN_FWD=""
+WAN_LEFT=""
 i=0
 while [ -n "$(uci -q get firewall.@zone[$i].name 2>/dev/null)" ]; do
-	if [ "$(uci -q get firewall.@zone[$i].name)" = "wan" ]; then
-		FORWARD=$(uci -q get firewall.@zone[$i].forward)
-		break
-	fi
+	ZNAME=$(uci -q get firewall.@zone[$i].name)
+	[ "$ZNAME" = "wan" ] && WAN_LEFT=1
+	[ "$ZNAME" = "lan" ] && LAN_FWD=$(uci -q get firewall.@zone[$i].forward)
 	i=$((i + 1))
 done
-if [ "$FORWARD" = "DROP" ]; then
-	ok "wan 区域 forward=DROP"
+if [ -n "$WAN_LEFT" ]; then
+	bad "firewall 残留 wan 区域（引用已删除的 wan/wan6 接口）"
 else
-	warn "wan 区域 forward 非 DROP（当前: ${FORWARD:-未设置}）"
+	ok "firewall 无 wan 区域残留"
+fi
+if [ "$LAN_FWD" = "ACCEPT" ]; then
+	ok "lan 区域 forward=ACCEPT（客户端转发放行）"
+else
+	bad "lan 区域 forward 非 ACCEPT（当前: ${LAN_FWD:-未设置}，旁路由无法转发）"
+fi
+
+if [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = "1" ]; then
+	ok "IPv4 转发已开启"
+else
+	bad "IPv4 转发未开启（旁路由无法给客户端转发流量）"
+fi
+
+# 客户端流量从 br-lan 进、又从同一个 br-lan 出，严格反向路径过滤会把这类非对称包直接丢弃。
+if [ "$(cat /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null)" = "0" ]; then
+	ok "IPv4 rp_filter 已关闭"
+else
+	bad "IPv4 rp_filter 未关闭（旁路由同口转发会丢包）"
 fi
 
 if [ "$(cat /proc/sys/net/ipv6/conf/all/forwarding 2>/dev/null)" = "1" ]; then

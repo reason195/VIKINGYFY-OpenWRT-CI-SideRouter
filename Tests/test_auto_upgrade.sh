@@ -10,10 +10,17 @@
 # 覆盖（对应 2026-09-17「新固件未自动升级」排障后的修复）：
 #   1 正常升级路径（last_tag 落后于最新 release）
 #   2 基线自愈：last_tag 缺失 + 固件内含 /etc/buffy-version → 以运行版本为基线并升级
-#   3 旧固件兜底：last_tag 缺失且无 buffy-version → 仅记录基线、不刷机
+#   3 无构建标识：无法判断所属分支 → 跳过刷机并告警，不退回「挑最新的刷」
 #   4 已是最新
 #   5 未启用：退出行为不变，周一推一次告警（/tmp 标记节流）
 #   6 配置段缺失：自动重建并继续
+#   7 刷机模式：keep_config 为 0／空／非 1 值 → sysupgrade -n
+# 覆盖（对应 2026-11-05「release tag 加入 CI 分支段，只刷同分支」）：
+#   8 分支隔离：本机属旁路由分支，atom 里更「新」的主路由 release 必须被忽略
+#   9 同分支有新版 → 正常进入下载
+#  10 前缀推导保留尾部横杠 → 资产名不出现 sysupgrade--日期 的双横杠
+#  11 标识结尾不是日期（格式不符）→ 同样跳过刷机
+#  12 标识缺失的告警按 boot 节流：第二次运行不重复推
 #
 # 用法：sh Tests/test_auto_upgrade.sh
 # 退出码：0 = 全部通过；1 = 有失败
@@ -34,6 +41,12 @@ REAL_DATE=$(command -v date)
 [ -x "$REAL_DATE" ] || REAL_DATE=/bin/date
 TAG_NEW="IPQ60XX-WIFI-NO-VIKINGYFY-main-26.09.17-06.35.27"
 TAG_OLD="IPQ60XX-WIFI-NO-VIKINGYFY-main-26.09.08-06.29.39"
+# 新格式：$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_REF-$WRT_DATE。
+# 前段的 main 是上游 immortalwrt 源码分支，$WRT_REF 才是本仓库分支（feat/side-... → feat-side-...）。
+TAG_MAIN_NEW="IPQ60XX-WIFI-NO-VIKINGYFY-main-main-26.11.05-06.35.27"
+TAG_SIDE_OLD="IPQ60XX-WIFI-NO-VIKINGYFY-main-feat-side-router-optimization-26.11.04-08.00.00"
+TAG_SIDE_NEW="IPQ60XX-WIFI-NO-VIKINGYFY-main-feat-side-router-optimization-26.11.05-08.00.00"
+ASSET_SIDE_NEW="qualcommax-ipq60xx-jdcloud_re-cs-07-squashfs-sysupgrade-26.11.05-08.00.00.bin"
 PASS=0
 FAIL=0
 
@@ -79,6 +92,21 @@ cat > "$SBX/etc/atom.xml" <<'ATOM'
   </entry>
 </feed>
 ATOM
+
+# 按用例改写 atom（curl mock 固定 cat 上面这个文件）；参数顺序 = feed 里由新到旧的顺序。
+# <id> 必须独占一行：被测脚本用 sed 's#.*<id>...\(\([^<]*\)\)</id>#\1#p' 只替换匹配段并保留行尾，
+# 若把 <title> 挤在同一行，提取出的 tag 会带上 <title>…</title></entry> 尾巴。
+set_atom() {
+	{
+		printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+			'<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en-US">' \
+			'  <id>tag:github.com,2008:https://github.com/reason195/VIKINGYFY-OpenWRT-CI/releases</id>'
+		for T in "$@"; do
+			printf '  <entry>\n    <id>tag:github.com,2008:Repository/1298512691/%s</id>\n    <title>%s</title>\n  </entry>\n' "$T" "$T"
+		done
+		printf '%s\n' '</feed>'
+	} > "$SBX/etc/atom.xml"
+}
 
 # uci mock：状态存于 $SBX/etc/uci-state（section/enabled/keep_config/last_tag）
 # 注意：key 前缀含 [0]，参数展开 ${k#prefix} 里 [0] 是通配符（匹配字符 0）而非字面量，
@@ -197,6 +225,8 @@ LOG_HAS() { grep -q "$1" "$SBX/tmp/auto_upgrade.log"; }
 LOG_NOT() { ! grep -q "$1" "$SBX/tmp/auto_upgrade.log"; }
 LAST_TAG() { sed -n 's/^last_tag=//p' "$SBX/etc/uci-state" | tail -n 1; }
 CURL_CALLED() { [ -s "$SBX/etc/curl.log" ]; }
+# 告警本身也走 curl（notify），所以"有没有查过 release"要单独判
+ATOM_FETCHED() { grep -q 'releases.atom' "$SBX/etc/curl.log" 2>/dev/null; }
 SUPG_CALLED() { [ -s "$SBX/etc/sysupgrade.log" ]; }
 
 check() { # check <描述> <条件表达式>
@@ -223,7 +253,9 @@ reset_case() { # reset_case <enabled> <keep_config> <last_tag> <section> [buffy_
 	rm -f "$SBX/etc/buffy-version"
 	[ -n "${5:-}" ] && printf '%s\n' "$5" > "$SBX/etc/buffy-version"
 	: > "$SBX/tmp/auto_upgrade.log"
-	rm -f "$SBX/tmp/.auto_upgrade_off_notified" "$SBX/etc/curl.log" "$SBX/etc/sysupgrade.log"
+	rm -f "$SBX/tmp/.auto_upgrade_off_notified" "$SBX/tmp/.auto_upgrade_noprefix" "$SBX/etc/curl.log" "$SBX/etc/sysupgrade.log"
+	# atom 恢复到默认 fixture：用例里改过 set_atom 的话不能污染后续用例
+	set_atom "$TAG_NEW" "$TAG_OLD"
 }
 
 run_script() {
@@ -236,7 +268,7 @@ run_script() {
 }
 
 echo "== 用例 1：正常升级路径（基线落后） =="
-reset_case 1 1 "$TAG_OLD" 1
+reset_case 1 1 "$TAG_OLD" 1 "$TAG_OLD"
 RC=$(run_script)
 check "识别到新版本" "LOG_HAS '发现新固件：$TAG_OLD -> $TAG_NEW'"
 check "进入下载步骤（沙箱内下载失败，退出码 1）" "[ \"$RC\" = \"1\" ]"
@@ -250,14 +282,19 @@ RC=$(run_script)
 check "按固件内版本初始化基线" "LOG_HAS '基线缺失，已按固件内构建版本初始化：$TAG_OLD'"
 check "写入 uci last_tag=运行版本" "[ \"\$(LAST_TAG)\" = \"$TAG_OLD\" ]"
 check "据此判定需要升级（未误判为已是最新）" "LOG_HAS '发现新固件：$TAG_OLD -> $TAG_NEW'"
-check "未走「记录最新版本为基线」的旧分支" "LOG_NOT '为基线（不刷机）'"
+check "未走「记录最新版本为基线」的旧分支" "LOG_HAS '本机 release 前缀：IPQ60XX-WIFI-NO-VIKINGYFY-main-'"
 
-echo "== 用例 3：旧固件兜底（无 buffy-version） =="
+echo "== 用例 3：无构建标识 → 跳过刷机，不退回「挑最新的刷」 =="
 reset_case 1 1 "" 1
 RC=$(run_script)
-check "记录最新版本为基线且不刷机" "LOG_HAS '固件无版本标识：记录当前最新版本 $TAG_NEW 为基线（不刷机）'"
-check "退出码 0" "[ \"$RC\" = \"0\" ]"
-check "未进入下载" "LOG_NOT '尝试下载'"
+check "判定无法推导前缀并退出" "LOG_HAS '推导 release 前缀（内容：文件缺失），跳过自动刷机'"
+check "退出码 0（非故障）" "[ \"$RC\" = \"0\" ]"
+check "未拉取 atom、未刷机" "! ATOM_FETCHED && ! SUPG_CALLED"
+check "推送一次跳过告警并写节流标记" "[ -f \"$SBX/tmp/.auto_upgrade_noprefix\" ]"
+: > "$SBX/etc/curl.log"
+RC=$(run_script)
+check "同 boot 第二次仍跳过刷机" "[ \"$RC\" = \"0\" ] && LOG_HAS '跳过自动刷机'"
+check "第二次不再重复推告警（节流生效）" "! CURL_CALLED"
 
 echo "== 用例 4：已是最新 =="
 reset_case 1 1 "$TAG_NEW" 1 "$TAG_NEW"
@@ -287,15 +324,48 @@ check "重建后继续执行并发现新固件" "LOG_HAS '发现新固件：$TAG
 check "重建的默认值不保留配置" "LOG_HAS '刷机模式：重置配置升级'"
 
 echo "== 用例 7：刷机模式默认不保留配置 =="
-reset_case 1 0 "$TAG_OLD" 1
+reset_case 1 0 "$TAG_OLD" 1 "$TAG_OLD"
 run_script >/dev/null 2>&1
 check "keep_config=0 走 sysupgrade -n 模式" "LOG_HAS '刷机模式：重置配置升级'"
-reset_case 1 "" "$TAG_OLD" 1
+reset_case 1 "" "$TAG_OLD" 1 "$TAG_OLD"
 run_script >/dev/null 2>&1
 check "keep_config 选项缺失/为空同样重置" "LOG_HAS '刷机模式：重置配置升级'"
-reset_case 1 x "$TAG_OLD" 1
+reset_case 1 x "$TAG_OLD" 1 "$TAG_OLD"
 run_script >/dev/null 2>&1
 check "非 1 的任意值仍按重置处理" "LOG_HAS '刷机模式：重置配置升级'"
+
+echo "== 用例 8：分支隔离——旁路由机器忽略主路由分支的更新 release =="
+reset_case 1 1 "$TAG_SIDE_OLD" 1 "$TAG_SIDE_OLD"
+# fixture 故意把 main 分支的 release 排在最前（atom 由新到旧），朴素地取首条就会刷错分支
+set_atom "$TAG_MAIN_NEW" "$TAG_SIDE_NEW" "$TAG_SIDE_OLD"
+RC=$(run_script)
+check "前缀按本仓库分支推导" "LOG_HAS '本机 release 前缀：IPQ60XX-WIFI-NO-VIKINGYFY-main-feat-side-router-optimization-'"
+check "选中同分支的新版而非更靠前的 main 版" "LOG_HAS '发现新固件：$TAG_SIDE_OLD -> $TAG_SIDE_NEW'"
+check "忽略其它分支的 release" "LOG_NOT \"$TAG_MAIN_NEW\""
+check "资产名由 tag 正确推出（日期前只有一个横杠）" "LOG_HAS \"（$ASSET_SIDE_NEW）\""
+check "不出现 sysupgrade--日期 的错误名" "LOG_NOT 'sysupgrade--'"
+check "走到下载步骤才失败（rc=1）" "[ \"$RC\" = \"1\" ]"
+
+echo "== 用例 9：主路由机器忽略旁路由分支的更新 release =="
+reset_case 1 1 "$TAG_MAIN_NEW" 1 "$TAG_MAIN_NEW"
+set_atom "$TAG_SIDE_NEW" "$TAG_MAIN_NEW"
+RC=$(run_script)
+check "已是最新判定用的是本分支的 tag" "LOG_HAS '已是最新（$TAG_MAIN_NEW），退出'"
+check "退出码 0 且不刷机" "[ \"$RC\" = \"0\" ] && ! SUPG_CALLED"
+
+echo "== 用例 10：本分支尚无任何 release =="
+reset_case 1 1 "$TAG_SIDE_NEW" 1 "$TAG_SIDE_NEW"
+set_atom "$TAG_MAIN_NEW" "$TAG_NEW"
+RC=$(run_script)
+check "记录等待下次构建" "LOG_HAS '没有属于本分支'"
+check "退出码 0（新分支首日属正常，不算故障）" "[ \"$RC\" = \"0\" ]"
+check "不进入下载、不告警刷屏" "LOG_NOT '尝试下载'"
+
+echo "== 用例 11：标识结尾不是日期（格式不符）→ 跳过 =="
+reset_case 1 1 "$TAG_SIDE_OLD" 1 "IPQ60XX-WIFI-NO-VIKINGYFY-main-feat-side-router-optimization"
+RC=$(run_script)
+check "拒绝推导并跳过刷机" "LOG_HAS '推导 release 前缀'"
+check "退出码 0 且未走到 atom 比对" "[ \"$RC\" = \"0\" ] && LOG_NOT '发现新固件'"
 
 rm -rf "$SBX" 2>/dev/null || true
 

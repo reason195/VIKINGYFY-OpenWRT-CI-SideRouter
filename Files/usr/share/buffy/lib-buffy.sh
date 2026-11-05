@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT
 # lib-buffy.sh - buffy 各脚本公共函数库（source 引入，勿直接执行）
 # 提供：log / notify / resolve / cert_expires_within / openclash_conf / openclash_ready / proxy_204
-# 共享配置：NTFY（ntfy 主题）、DOMAIN（DDNS 域名）、LEAF（证书叶路径，由 DOMAIN 派生）——
+# 共享配置：NTFY（ntfy 主题）、DOMAIN（Let's Encrypt 证书域名，DDNS 已移除、仅用于证书路径与告警文案）、
+# LEAF（证书叶路径，由 DOMAIN 派生）——
 # 在此单点定义，其余脚本 source 后直接使用、勿重复硬编码；需独立主题的脚本可在 source 后覆盖 NTFY。
 # 约定：调用方需先定义 LOG（log 用）。notify 同时走 ntfy 与 Telegram。
 

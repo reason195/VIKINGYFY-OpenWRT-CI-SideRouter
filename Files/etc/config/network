@@ -7,40 +7,28 @@ config globals 'globals'
 	option dhcp_default_duid '00040f3ac6faa75a588a94b39ea76e7b7828'
 	option packet_steering '0'
 
+# 旁路由：wan 口不再拨号，并入 br-lan 当作第 4 个 LAN 口。
+# device 'wan' 这个名字沿用板级 board.d 的定义（原 wan 接口就是这么引用的），无需再建 device 段。
 config device
 	option name 'br-lan'
 	option type 'bridge'
 	list ports 'lan1'
 	list ports 'lan2'
 	list ports 'lan3'
+	list ports 'wan'
 
+# 旁路由：本机只做 LAN 内的转发网关 + DNS，出口交给主路由 192.168.1.1。
+# gateway 必须写死：没有 PPPoE 就没有动态默认路由，漏掉则本机无出口，
+# OpenClash 起不来、LuCI 连不上、也刷不回去。
+# 不配 ip6assign：无 PD 可派，IPv6 的 RA/默认路由由主路由下发，本机只转发。
 config interface 'lan'
 	option device 'br-lan'
 	option proto 'static'
-	option ipaddr '192.168.1.1'
-	option ip6assign '64'
+	option ipaddr '192.168.1.2'
 	option netmask '255.255.255.0'
-	option ip6ifaceid 'eui64'
-
-config interface 'wan'
-	option device 'wan'
-	option proto 'pppoe'
-	option username '@@PPPOE_USERNAME@@'
-	option password '@@PPPOE_PASSWORD@@'
-	# '1' 只协商 IPv6CP；'auto' 会额外派生 wan_6 虚拟 dhcpv6 接口，与下方显式 wan6
-	# 两个客户端同链路同 DUID 冲突，wan_6 每秒翻动刷爆日志（实测 15 分钟 1682 条）。
-	option ipv6 '1'
-
-config interface 'wan6'
-	option device '@wan'
-	option proto 'dhcpv6'
-	option reqaddress 'try'
-	option reqprefix 'auto'
-
-config interface 'modem'
-	option proto 'static'
-	option device 'wan'
-	option ipaddr '192.168.0.2'
-	option netmask '255.255.255.0'
-	option defaultroute '0'
-	option peerdns '0'
+	option gateway '192.168.1.1'
+	# 本机自身解析走主路由 + 公共 DNS，不走 127.0.0.1 → dnsmasq → OpenClash 那条链：
+	# OpenClash 未就绪时本机仍有 DNS（首启拉订阅、acme 签发都依赖本机直连）。
+	# 客户端的 DNS 仍由 dnsmasq/OpenClash 接管，见 /etc/config/dhcp 与 redirect_dns。
+	list dns '192.168.1.1'
+	list dns '223.5.5.5'

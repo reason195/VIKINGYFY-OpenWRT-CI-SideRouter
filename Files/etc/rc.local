@@ -45,7 +45,7 @@ printf 'server=223.5.5.5\nserver=119.29.29.29\nserver=2400:3200::1\n' > "$DIR/60
 chmod 644 "$DIR/60-fallback.conf"
 /etc/init.d/dnsmasq restart >/dev/null 2>&1
 
-# custom_fakeip_filter 自愈（防断网修复项）：订阅源/规则源/DDNS 等域名必须返回真实 IP。
+# custom_fakeip_filter 自愈（防断网修复项）：订阅源/规则源/acme(DuckDNS API) 等域名必须返回真实 IP。
 # 若列表文件被误删、uci 标志被改回 0（本机无任何 OpenClash 操作会动它们，此为双保险），
 # 每次启动时恢复。注意：列表烤在 /rom，这里直接从 /rom 恢复，避免内嵌第二份副本。
 uci -q get openclash.config.custom_fakeip_filter | grep -q '^1$' || {

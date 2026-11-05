@@ -29,7 +29,7 @@ uci -q delete openclash.config.enable_custom_domain_dns_server
 uci set openclash.config.enable_custom_domain_dns_server='1'
 uci -q delete openclash.config.custom_domain_dns_server
 uci set openclash.config.custom_domain_dns_server='223.5.5.5'
-# 关键修复：订阅源/规则源/DDNS 等"路由器自身需直连"的域名必须返回真实 IP。
+# 关键修复：订阅源/规则源/acme(DuckDNS API) 等"路由器自身需直连"的域名必须返回真实 IP。
 # 根因：provider 拉取用 proxy: DIRECT，但域名经 respect-rules + fake-ip DNS
 # 解析成 198.18.x.x，DIRECT 直连 fake-ip 必然 EOF（alpha 核心行为）。
 # 解法：custom_fakeip_filter 把这些域名加入 fake-ip-filter（解析真实 IP）。

@@ -4,7 +4,7 @@
 # verify_flash.py — 校验已刷入路由器的固件与本仓库 Files/ 的一致性（含 secret 脱敏）。
 #
 # 用法：
-#   python3 Scripts/verify_flash.py                     # 默认 192.168.1.1 root/root
+#   python3 Scripts/verify_flash.py                     # 默认 192.168.1.2 root/root（旁路由）
 #   python3 Scripts/verify_flash.py --host 10.0.0.1 --user admin --password xxxx
 #   ROUTER_HOST=... ROUTER_USER=... ROUTER_PASSWORD=... python3 Scripts/verify_flash.py
 #
@@ -212,9 +212,10 @@ RUNTIME_CHECKS = [
     ("核心与规则集", "ls -la /etc/openclash/core/clash_meta 2>/dev/null; ls /etc/openclash/rule_provider/ 2>/dev/null | wc -l; wc -c /etc/openclash/config/MihomoPro.yaml 2>/dev/null"),
     ("clash 进程与端口", "pidof clash; netstat -tln 2>/dev/null | grep -E ':(9090|7890|7891|7893|7874)'"),
     ("开机自检", "ls -la /etc/.openclash-bootstrap-done 2>/dev/null; cat /tmp/boot_selfcheck.log 2>/dev/null | tail -3"),
-    ("dnsmasq 关键项", "uci get dhcp.@dnsmasq[0].cachesize; uci get dhcp.@dnsmasq[0].strictorder; uci get dhcp.@dnsmasq[0].quietdhcp; uci get dhcp.@dnsmasq[0].rebind_domain; cat /tmp/dnsmasq.*.d/60-fallback.conf 2>/dev/null"),
-    ("防火墙", "uci show firewall 2>/dev/null | grep -E 'Allow-WAN|flow_offloading|fullcone'"),
-    ("uhttpd / DDNS", "uci show uhttpd 2>/dev/null | grep -E 'redirect_https|listen_https'; uci show ddns 2>/dev/null | grep -E 'ip_interface|enabled|lookup_host'"),
+    ("dnsmasq 关键项", "uci get dhcp.@dnsmasq[0].cachesize; uci get dhcp.@dnsmasq[0].strictorder; uci get dhcp.@dnsmasq[0].quietdhcp; uci get dhcp.@dnsmasq[0].rebind_domain; uci get dhcp.@dnsmasq[0].authoritative; cat /tmp/dnsmasq.*.d/60-fallback.conf 2>/dev/null"),
+    ("旁路由转发就位", "uci show network.lan; uci show dhcp.lan; ip -4 route show default; sysctl -n net.ipv4.ip_forward net.ipv4.conf.all.rp_filter 2>/dev/null"),
+    ("防火墙", "uci show firewall | grep -E '@zone|forward=|flow_offloading|fullcone'; nft list table inet fw4 >/dev/null 2>&1 && echo 'fw4 表已加载' || echo 'fw4 表缺失'"),
+    ("uhttpd", "uci show uhttpd 2>/dev/null | grep -E 'redirect_https|listen_https'"),
     ("运行时 crontab", "cat /etc/crontabs/root 2>/dev/null"),
 ]
 
@@ -223,7 +224,7 @@ def check_uci_defaults():
     """校验 4 个首启即消费的 uci-defaults 脚本的运行时效果，返回 [(脚本, ok, 详情)]。"""
     results = []
 
-    # 90-buffy-dropbear.sh：解绑 lan 接口，允许经 WAN(IPv6) SSH
+    # 90-buffy-dropbear.sh：解绑接口监听（旁路由只有 br-lan，解绑后仍只听本机地址）
     d = uci_dump("dropbear")
     bound = [k for k in d if "Interface" in k]
     results.append(("90-buffy-dropbear.sh", not bound,
@@ -239,27 +240,24 @@ def check_uci_defaults():
     results.append(("91-buffy-uhttpd.sh", ok,
                     f"redirect_https={rh!r}(应为None，即无强制跳转) listen_https={lh!r}"))
 
-    # 92-buffy-firewall.sh：硬件流卸载 + fullcone6 + wan forward=DROP + WAN v6 放行 SSH/LuCI
+    # 92-buffy-firewall.sh：硬件流卸载 + 清除引用已删除接口的 wan 区域/规则 + 清掉残留 fullcone6
     d = uci_dump("firewall")
     fo = d.get("firewall.@defaults[0].flow_offloading")
     foh = d.get("firewall.@defaults[0].flow_offloading_hw")
     fc6 = d.get("firewall.@defaults[0].fullcone6")
-    wan_sec = find_named_section(d, "firewall.@zone", "wan")
-    wan_fwd = d.get(f"{wan_sec}.forward") if wan_sec else None
-    ssh_sec = find_named_section(d, "firewall.@rule", "Allow-WAN-SSH-v6")
-    luci_sec = find_named_section(d, "firewall.@rule", "Allow-WAN-LuCI-v6")
-    ssh_ok = bool(ssh_sec and d.get(f"{ssh_sec}.src") == "wan"
-                  and d.get(f"{ssh_sec}.family") == "ipv6" and d.get(f"{ssh_sec}.proto") == "tcp"
-                  and d.get(f"{ssh_sec}.dest_port") == "22" and d.get(f"{ssh_sec}.target") == "ACCEPT")
-    luci_dp = d.get(f"{luci_sec}.dest_port") if luci_sec else None
-    luci_ok = bool(luci_sec and d.get(f"{luci_sec}.src") == "wan"
-                   and d.get(f"{luci_sec}.family") == "ipv6" and d.get(f"{luci_sec}.proto") == "tcp"
-                   and luci_dp and set(luci_dp) == {"80", "443"}
-                   and d.get(f"{luci_sec}.target") == "ACCEPT")
-    ok = fo == "1" and foh == "1" and fc6 == "1" and wan_fwd == "DROP" and ssh_ok and luci_ok
+    lan_sec = find_named_section(d, "firewall.@zone", "lan")
+    lan_fwd = d.get(f"{lan_sec}.forward") if lan_sec else None
+    # 旁路由没有 wan/wan6 接口：残留的 wan 区域或 src='wan' 规则会让 fw4 引用不存在的接口，
+    # 整张表加载失败 → 客户端全断，所以「已清除」本身就是必须成立的断言。
+    # fullcone6 同理：kmod-nft-fullcone 已移出固件，保留配置升级带过来的旧值必须被删掉。
+    wan_left = find_named_section(d, "firewall.@zone", "wan")
+    wan_rules = [k for k in d if k.endswith(".src") and d[k] == "wan"]
+    ok = (fo == "1" and foh == "1" and fc6 is None
+          and lan_fwd == "ACCEPT" and wan_left is None and not wan_rules)
     results.append(("92-buffy-firewall.sh", ok,
-                    f"flow_offloading={fo} hw={foh} fullcone6={fc6} wan.forward={wan_fwd} "
-                    f"SSHv6={'✓' if ssh_ok else '✗'} LuCIv6={'✓' if luci_ok else '✗'}"))
+                    f"flow_offloading={fo} hw={foh} fullcone6={fc6 or '已清除'} "
+                    f"lan.forward={lan_fwd} "
+                    f"wan区域残留={'有' if wan_left else '无'} wan规则残留={len(wan_rules)}"))
 
     # 93-buffy-openclash.sh：核心/规则/订阅/时刻表/凭据等运行时选项
     d = uci_dump("openclash")
@@ -331,7 +329,7 @@ def check_uci_defaults():
 
 def main():
     ap = argparse.ArgumentParser(description="校验已刷入固件与本仓库 Files/ 的一致性")
-    ap.add_argument("--host", default=os.environ.get("ROUTER_HOST", "192.168.1.1"))
+    ap.add_argument("--host", default=os.environ.get("ROUTER_HOST", "192.168.1.2"))
     ap.add_argument("--user", default=os.environ.get("ROUTER_USER", "root"))
     ap.add_argument("--password", default=os.environ.get("ROUTER_PASSWORD", "root"))
     ap.add_argument("--files", default=None, help="Files/ 目录路径（默认脚本同级的 ../Files）")

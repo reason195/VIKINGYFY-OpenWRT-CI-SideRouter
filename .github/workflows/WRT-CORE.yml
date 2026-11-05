@@ -116,6 +116,12 @@ jobs:
           echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
           echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
           echo "WRT_INFO=${WRT_SOURCE%%/*}" >> $GITHUB_ENV
+          # WRT_REF = 本仓库分支名。注意与 WRT_BRANCH 不同：后者是上游 immortalwrt 的源码分支
+          # （QCA-ALL 里恒为 main），拿它当标识分不清固件出自哪个 CI 分支。
+          # '/'→'-' 保证段内无斜杠，tag 与 release 下载 URL 路径才能安全拼接。
+          # release tag 带上本段后，路由器端 auto_upgrade.sh 只刷与自己同分支的新版
+          # （前缀由 /etc/buffy-version 剥掉日期得到，两边格式必须一致）。
+          echo "WRT_REF=${GITHUB_REF_NAME//\//-}" >> $GITHUB_ENV
           echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt)" >> $GITHUB_ENV
           # 从设备列表提取具体设备名（如 jdcloud_re-cs-07），release 正文显示用
           echo "WRT_DEVICE=$(grep -m 1 -oP '^CONFIG_TARGET_DEVICE_.*_DEVICE_\K.+(?=\=y)' ./Config/$WRT_CONFIG.txt)" >> $GITHUB_ENV
@@ -280,8 +286,9 @@ jobs:
         run: |
           # 列出本仓库（CI 配置）自上一个同配置 release 以来的提交，使描述随每次发布更新
           git fetch --tags --force origin >/dev/null 2>&1 || true
+          # 上一个 release 必须按「同 CI 分支」取，否则变更日志会跨分支算提交范围
           PREV_TAG=$(gh release list --limit 30 --json tagName -q '.[].tagName' 2>/dev/null \
-            | grep "^$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-" | head -1)
+            | grep "^$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_REF-" | head -1)
           if [ -n "$PREV_TAG" ]; then
             CHANGES=$(git log --oneline "$PREV_TAG"..HEAD 2>/dev/null | head -30)
             if [ -n "$CHANGES" ]; then
@@ -343,7 +350,7 @@ jobs:
         if: env.WRT_TEST != 'true'
         uses: softprops/action-gh-release@master
         with:
-          tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_DATE}}
+          tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_REF}}-${{env.WRT_DATE}}
           files: ./wrt/upload/*.*
           body: |
             这是 ${{env.WRT_DEVICE}} 单设备固件包！
@@ -354,6 +361,7 @@ jobs:
 
             源码：${{env.WRT_REPO}}
             分支：${{env.WRT_BRANCH}}
+            CI 分支：${{env.WRT_REF}}
             提交：${{env.WRT_HASH}}${{env.WRT_UPSTREAM_NOTE}}
 
             配置：${{env.WRT_CONFIG}}

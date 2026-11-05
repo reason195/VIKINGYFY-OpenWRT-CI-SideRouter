@@ -1,11 +1,45 @@
-# VIKINGYFY-OpenWRT-CI（京东云 jdcloud_re-cs-07 定制版）
+# VIKINGYFY-OpenWRT-CI-SideRouter（京东云 jdcloud_re-cs-07 · 旁路由专用）
+
+从 [reason195/VIKINGYFY-OpenWRT-CI](https://github.com/reason195/VIKINGYFY-OpenWRT-CI)（主路由形态）拆出的独立仓库，构建逻辑同源。拆库原因：两种角色的 release 落在同一个命名空间会互相挤占 `Auto-Clean` 的「保留 5 条」配额，而 GitHub 的 schedule 只在默认分支运行——分库后 release、清理配额、定时构建各自独立。
 
 基于 [VIKINGYFY/OpenWRT-CI](https://github.com/VIKINGYFY/OpenWRT-CI) 的 ImmortalWRT 固件自动构建项目，本仓库只维护单设备固件：
 
 - 设备：京东云 jdcloud_re-cs-07（Qualcomm IPQ60xx 平台，无 WiFi）
 - 目标：`qualcommax/ipq60xx`，aarch64
-- 登录地址：`192.168.1.1`，root 密码由 GitHub Secret `ROUTER_ROOT_PASSWORD` 注入
-- 构建：每日凌晨 4:00（北京时间）检查上游 [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt)（main 分支），有更新才自动编译并发布 release；旧 release 自动清理只留 5 个
+- 角色：**旁路由**（不拨号、不发 DHCP），挂在主路由下做 LAN 内的转发网关 + DNS + OpenClash 代理节点
+- 登录地址：`192.168.1.2`，root 密码由 GitHub Secret `ROUTER_ROOT_PASSWORD` 注入；主路由为 `192.168.1.1`
+- 构建：每日凌晨 4:00（北京时间）检查上游 [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt)（main 分支），有更新才自动编译并发布 release；旧 release 自动清理只留 5 个（本仓库独立计数）
+
+> ⚠️ 新仓库首次构建前必须重配 Secrets，缺失会直接终止构建：
+> `ROUTER_ROOT_PASSWORD`、`DDNS_TOKEN`（acme DNS-01 用）、`HP_ADDRESS`、`HP_UUID`、`MAIN_AIRPORT_SUB`、`BACKUP_AIRPORT_SUB`。
+> 可选：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`SINGBOX_SS_PASSWORD`；`PPPOE_USERNAME`/`PPPOE_PASSWORD` 旁路由已不拨号，降为可选、可不配置。
+> GitHub API 读不到 secret 的**值**，跨仓库无法自动搬运，只能手动重设一遍。
+
+## 旁路由形态说明
+
+| 项 | 本固件的行为 |
+|---|---|
+| 出口 | `lan` 静态 `192.168.1.2/24` + `gateway 192.168.1.1`，无 wan/wan6/modem 接口，不再 PPPoE 拨号 |
+| LAN 口 | 原 `wan` 物理口并入 `br-lan`，4 个口全部当交换口用 |
+| DHCP/RA | 全部关闭（`dhcpv4/ra/dhcpv6/ndp = disabled`，不是 `ignore`——`ignore` 会连 dnsmasq 的 DNS 一起摘掉），地址与网关仍由主路由下发 |
+| DNS | 本机 dnsmasq 继续在 br-lan 上服务，上游指向 OpenClash（`127.0.0.1#7874`），`authoritative` 已关 |
+| 接管方式 | 需要走代理的客户端**手动**把「网关 + DNS」填 `192.168.1.2`；不填的照旧直连主路由 |
+| IPv6 | 本机不发 RA，且内核在 `forwarding=1` 时不采纳 RA → 本机一般无全局 IPv6；客户端 IPv6 由主路由直接下发、**不经本机、不走代理** |
+| DDNS | **已从固件移除**：`/etc/config/ddns` 与 `luci-app-ddns`/`ddns-scripts`/`ddns-scripts-duckdns`/其中文包一起删。旁路由不是边缘设备，也没有公网接口可取地址 |
+| 防火墙 | 清除引用已删除接口的 `wan` 区域与 `Allow-WAN-*-v6` 规则（残留会让 fw4 整表加载失败）；保留硬件流卸载；`rp_filter=0` 放行同口非对称转发。FullCone 已随 NAT 角色一起移除 |
+
+外部访问：本固件不再维护域名解析。若仍要用 `reason195.duckdns.org` 从外面进 LuCI，得两步都齐——① 由主路由（或别处）把记录解析到你的入口地址；② IPv4 在主路由做端口转发到 `192.168.1.2:443`（外部端口建议换 `8443`，家宽普遍封 443 入站），或 IPv6 在主路由防火墙放行入站（IPv6 无 NAT，是「放行」不是「转发」）。
+证书不受影响：acme 走 DNS-01，只写 `_acme-challenge` 的 TXT 记录、不依赖 A/AAAA，用的仍是同一个 `DDNS_TOKEN`。
+
+### 旁路由下已移除的软件包
+
+| 包 | 移除原因 |
+|---|---|
+| `ddns-scripts` / `ddns-scripts-duckdns` / `luci-app-ddns` / `luci-i18n-ddns-zh-cn` | 旁路由没有公网接口可取地址，DDNS 永远失败；`DDNS_TOKEN` 与 `Files/etc/config/acme` 保留给证书 |
+| `luci-app-upnp`（连带 `etc/config/upnpd`） | 本机不是 NAT 边缘设备，映射对入向流量无效，还会与主路由抢答 SSDP |
+| `luci-app-fullconenat-sonic` / `luci-i18n-fullconenat-sonic-zh-cn` / `kmod-nft-fullcone` | 旁路由不做 NAT，FullCone 没有作用对象；`--keep-config` 升级带过来的旧 `fullcone6='1'` 由 `92-buffy-firewall.sh` 删除 |
+
+`luci-app-homeproxy` / `luci-app-nikki` / `sing-box` 与 filebrowser、diskmanager、partexp、ksmbd、ttyd、vnstat2 等属个人功能，不随本次改造移除。装多套代理栈时注意不要同时开启，它们会互相抢转发和 DNS。
 
 ## 目录结构
 
@@ -22,8 +56,8 @@
 
 | Secret | 注入位置 |
 |---|---|
-| `PPPOE_USERNAME` / `PPPOE_PASSWORD` | `/etc/config/network`（PPPoE 拨号） |
-| `DDNS_TOKEN` | `/etc/config/ddns` + `/etc/config/acme`（DuckDNS） |
+| `PPPOE_USERNAME` / `PPPOE_PASSWORD` | 旁路由不再拨号，`/etc/config/network` 里已无对应占位符；Secret 已降为**可选**，可在仓库里删除 |
+| `DDNS_TOKEN` | `/etc/config/acme`（DuckDNS DNS-01）。DDNS 本身已移除，这个 token 现在只服务于证书签发 |
 | `HP_ADDRESS` / `HP_UUID` | `/etc/config/homeproxy` |
 | `MAIN_AIRPORT_SUB` / `BACKUP_AIRPORT_SUB` | `/etc/openclash/config/MihomoPro.yaml`（机场订阅） |
 | `ROUTER_ROOT_PASSWORD` | `/etc/shadow`（SHA-256 crypt 哈希） |
@@ -36,8 +70,8 @@
 
 - **OpenClash**：核心 / 规则集 / GEO / 大陆白名单 / 面板均在构建期预置，刷机首启即用（首启规则集空缓存死锁已修复）；控制台登录密钥与 SOCKS5/HTTP(S) 认证由 `luci-app-openclash` 首启随机生成（旧版自造值在升级首启自动迁移），快照见 `/etc/openclash-credentials.txt`
 - **DNS**：dnsmasq 备用上游（223.5.5.5 / 119.29.29.29 / 2400:3200::1）+ fake-ip 分流
-- **DDNS + HTTPS**：DuckDNS DDNS、Let's Encrypt 证书（DNS-01）自动签发/续期、LuCI 强制 HTTPS
-- **防火墙**：IPv6 WAN 放行 SSH/LuCI、wan 区域 forward=DROP、硬件流量卸载
+- **HTTPS 证书**：Let's Encrypt（DNS-01，DuckDNS API）自动签发/续期，`cert_check.sh` 失败告警；DDNS 已随旁路由改造移除，域名解析需由主路由或别处维护
+- **防火墙**：旁路由转发链路就位（无悬空 `wan` 区域、`lan` forward=ACCEPT、`ip_forward=1`、`rp_filter=0`）、硬件流量卸载
 - **监控告警**：ntfy + Telegram 双通道（见下方脚本）
 
 ### 监控脚本（`Files/usr/share/buffy/`）
@@ -58,9 +92,14 @@
 
 - 开关：`/etc/config/auto_upgrade` 的 `enabled`（**默认 1**）；`keep_config=0`（**默认**）→ `sysupgrade -n` **不保留配置刷机**，改为 `1` 才保留
 - 基线：`last_tag` 记录当前运行的 release tag；为空时读固件内 `/etc/buffy-version`（构建期由 `Settings.sh` 写入）作为运行版本，据此判断是否需要升级
+- **分支隔离**：release tag 格式为 `$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_REF-$WRT_DATE`，其中 `WRT_BRANCH` 是上游 immortalwrt 源码分支、`WRT_REF` 才是**本仓库分支**（`/`→`-`）。设备用 `/etc/buffy-version` 剥掉尾部日期得到本机前缀，只接受同前缀的 release——否则旁路由机器会自动刷成 `main` 产出的主路由镜像，登录地址/DHCP/wan 口归属被整体换掉
+- 标识缺失或格式不符时**跳过刷机**并按 boot 告警一次，绝不退化成"挑最新的刷"；本分支还没有任何 release 时只记日志、不告警（新分支首日属正常）
 - 校验：读 release 附带的 `SHA256SUMS.txt`（免 GitHub API 限流），sha256 不符即中止；刷机前校验 `board_name`
 - 日志：`/tmp/auto_upgrade.log`；失败与"未启用"都会推 ntfy/Telegram 告警（后者每周一提醒一次）
 - 调试：`AUTO_UPGRADE_DRYRUN=1 /usr/share/buffy/auto_upgrade.sh` 走完整流程但不刷写
+
+> 关于分支隔离：tag 里的 `$WRT_REF`（本仓库分支）与设备端按前缀筛选，是为「同一仓库并存两种角色」设计的。本固件已拆到独立仓库，release 命名空间天然隔离，这套逻辑退化为双保险——如果以后在本仓库再开角色分支，它仍然生效。
+> 独立仓库同时也解掉了原来两个坑：schedule 跑在本仓库的默认分支上，`Auto-Clean` 的「保留 5 条」只统计本仓库的 release。
 
 ```bash
 uci show auto_upgrade                                # 查看开关与基线
@@ -82,7 +121,7 @@ uci commit auto_upgrade
 
 ```bash
 pip install paramiko
-python3 Scripts/upgrade_firmware.py                            # 默认 192.168.1.1 root/root，不保留配置刷机（sysupgrade -n）
+python3 Scripts/upgrade_firmware.py                            # 默认 192.168.1.2 root/root（旁路由），不保留配置刷机（sysupgrade -n）
 python3 Scripts/upgrade_firmware.py --dry-run                  # 只下载+校验，不刷机
 python3 Scripts/upgrade_firmware.py --yes                      # 跳过刷机确认（默认已是不保留配置）
 python3 Scripts/upgrade_firmware.py --keep-config              # 改回保留配置升级（不清空 /etc 覆盖层）
@@ -91,6 +130,7 @@ python3 Scripts/upgrade_firmware.py --no-verify                # 刷机后不等
 
 - sha256 以 GitHub 资产 `digest` 为准，本地 + 路由器侧双重校验，不一致即中止
 - 刷机前校验路由器 `board_name` 与固件设备段一致，防止刷错设备
+- 连上路由器后读 `/etc/buffy-version`，把选版范围**收紧到本机所在的 CI 分支**；跨分支（例如主路由转旁路由那一次）必须显式 `--tag`，脚本会打印跨分支警告
 - 默认不保留配置（`-n` 清空 `/etc` 覆盖层，改用镜像内置配置，含构建期注入的 secret）：刷机前先在路由器上 `sysupgrade -b /tmp/backup.tar.gz` 备份，需要时 `sysupgrade -r` 还原
 - 刷机后自动等待重启（按 uptime 判断确已重启）、等 OpenClash 开机自检完成后再运行 `verify_flash.py` 复验；`--no-verify` 跳过
 - 建议已安装并登录 `gh`（避免 GitHub 匿名 API 限流）
@@ -101,9 +141,9 @@ python3 Scripts/upgrade_firmware.py --no-verify                # 刷机后不等
 
 ```bash
 pip install paramiko
-python3 Scripts/verify_flash.py                              # 默认 192.168.1.1 root/root
+python3 Scripts/verify_flash.py                              # 默认 192.168.1.2 root/root（旁路由）
 python3 Scripts/verify_flash.py --host 10.0.0.1 --user admin --password xxxx
-ROUTER_HOST=192.168.1.1 ROUTER_PASSWORD=root python3 Scripts/verify_flash.py
+ROUTER_HOST=192.168.1.2 ROUTER_PASSWORD=root python3 Scripts/verify_flash.py
 ```
 
 ## 上游参考

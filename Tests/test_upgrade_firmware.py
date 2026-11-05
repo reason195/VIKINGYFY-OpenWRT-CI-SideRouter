@@ -280,6 +280,104 @@ class FlashModeDefaultTest(unittest.TestCase):
         self.assertIn("unrecognized arguments: --reset", out.getvalue())
 
 
+class RunningPrefixTest(unittest.TestCase):
+    """running_prefix()：由设备构建标识推出本机 release 前缀（分支隔离的地基）。"""
+
+    def test_old_format_keeps_trailing_dash(self):
+        self.assertEqual(
+            uf.running_prefix("IPQ60XX-WIFI-NO-VIKINGYFY-main-26.08.17-00.13.34"),
+            "IPQ60XX-WIFI-NO-VIKINGYFY-main-")
+
+    def test_new_format_with_dashed_ref(self):
+        # CI 分支名自身含 '-'，只能按日期格式剥尾，不能按段数截取
+        self.assertEqual(
+            uf.running_prefix("IPQ60XX-WIFI-NO-VIKINGYFY-main-feat-side-router-optimization-26.11.04-04.00.00"),
+            "IPQ60XX-WIFI-NO-VIKINGYFY-main-feat-side-router-optimization-")
+
+    def test_rejects_missing_or_malformed_date(self):
+        self.assertIsNone(uf.running_prefix(""))
+        self.assertIsNone(uf.running_prefix(None))
+        self.assertIsNone(uf.running_prefix("IPQ60XX-WIFI-NO-VIKINGYFY-main-feat-side-router"))
+        self.assertIsNone(uf.running_prefix("IPQ60XX-WIFI-NO-VIKINGYFY-main-26.08.17"))
+
+    def test_tolerates_trailing_newline(self):
+        self.assertEqual(
+            uf.running_prefix("IPQ60XX-WIFI-NO-VIKINGYFY-main-main-26.11.05-04.00.00\n"),
+            "IPQ60XX-WIFI-NO-VIKINGYFY-main-main-")
+
+
+def make_branch_releases():
+    """两个 CI 分支各自的 release：main 的更新、旁路由分支的稍旧。
+    按宽松前缀朴素取最新会拿到 main 的镜像，把旁路由刷回主路由角色。"""
+    return [
+        {"tag_name": "IPQ60XX-WIFI-NO-VIKINGYFY-main-main-26.11.05-04.00.00",
+         "assets": [make_asset("qualcommax-ipq60xx-jdcloud_re-cs-07-squashfs-sysupgrade-26.11.05-04.00.00.bin",
+                               "sha256:" + "a" * 64)]},
+        {"tag_name": "IPQ60XX-WIFI-NO-VIKINGYFY-main-feat-side-router-optimization-26.11.04-04.00.00",
+         "assets": [make_asset("qualcommax-ipq60xx-jdcloud_re-cs-07-squashfs-sysupgrade-26.11.04-04.00.00.bin",
+                               "sha256:" + "e" * 64)]},
+    ]
+
+
+class BranchIsolationTest(unittest.TestCase):
+    """main() 的分支隔离：默认跟随路由器自身的 CI 分支选版，读不出标识就拒绝自动选版。"""
+
+    SIDE_TAG = "IPQ60XX-WIFI-NO-VIKINGYFY-main-feat-side-router-optimization-26.11.04-04.00.00"
+
+    def _argv(self, extra=None):
+        return ["upgrade_firmware.py", "--host", "192.0.2.1", "--user", "root",
+                "--password", "pw"] + (extra or [])
+
+    def _run(self, seq, extra=None, releases=None):
+        out = io.StringIO()
+        with patch.object(uf.sys, "argv", self._argv(extra)), \
+                patch.object(uf, "fetch_releases", return_value=releases or make_branch_releases()), \
+                patch.object(uf, "connect", return_value=MagicMock()), \
+                patch.object(uf, "ssh_run", side_effect=seq), \
+                patch.object(uf, "download", return_value="f" * 64) as mock_dl, \
+                patch.object(uf, "upload", return_value=None), \
+                contextlib.redirect_stdout(out):
+            rc = uf.main()
+        return rc, mock_dl, out.getvalue()
+
+    def test_autoselects_same_branch_release(self):
+        # board → 构建标识 → df → 路由器侧 sha256（故意不符，只为在下载之后中止，不触碰刷机）
+        rc, mock_dl, text = self._run([
+            ("jdcloud,re-cs-07", ""),
+            (self.SIDE_TAG, ""),
+            ("2048", ""),
+            ("f" * 64, ""),
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("已改选同分支 release", text)
+        self.assertIn("26.11.04", mock_dl.call_args[0][0])   # 下载的是旁路由分支的资产
+        self.assertNotIn("26.11.05", mock_dl.call_args[0][0])
+
+    def test_refuses_auto_select_without_build_id(self):
+        rc, mock_dl, text = self._run([
+            ("jdcloud,re-cs-07", ""),
+            ("", ""),
+        ])
+        self.assertEqual(rc, 2)
+        mock_dl.assert_not_called()
+        self.assertIn("判断不出本机属于哪个分支", text)
+
+    def test_explicit_tag_allows_cross_branch_with_warning(self):
+        """跨分支刷机是「主路由转旁路由」的正常路径，人工指定 tag 时放行但必须提示。"""
+        rc, mock_dl, text = self._run(
+            [
+                ("jdcloud,re-cs-07", ""),
+                (self.SIDE_TAG, ""),
+                ("2048", ""),
+                ("f" * 64, ""),
+            ],
+            extra=["--tag", "IPQ60XX-WIFI-NO-VIKINGYFY-main-main-26.11.05-04.00.00"],
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("跨分支刷机", text)
+        self.assertIn("26.11.05", mock_dl.call_args[0][0])
+
+
 class MainAbortPathsTest(unittest.TestCase):
     """main() 的两条安全关键中止分支（"绝不刷错/刷坏固件"的最后一道闸门）。
 
@@ -304,8 +402,9 @@ class MainAbortPathsTest(unittest.TestCase):
         releases = make_releases()
         seq = [
             ("jdcloud,re-cs-07", ""),  # ① board 匹配
-            ("2048", ""),              # ② df -m /tmp 空间检查
-            ("d" * 64, ""),            # ③ 路由器侧 sha256sum —— 与 GitHub digest 不符
+            ("IPQ60XX-WIFI-NO-VIKINGYFY-main-26.08.17-00.13.34", ""),  # ② 构建标识＝本分支，不改选
+            ("2048", ""),              # ③ df -m /tmp 空间检查
+            ("d" * 64, ""),            # ④ 路由器侧 sha256sum —— 与 GitHub digest 不符
         ]
         with patch.object(uf.sys, "argv", self._argv()), \
                 patch.object(uf, "fetch_releases", return_value=releases), \

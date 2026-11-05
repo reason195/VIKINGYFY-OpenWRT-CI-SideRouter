@@ -16,7 +16,9 @@ config dnsmasq
 	option quietdhcp '1'
 	option strictorder '1'
 	list rebind_domain 'cn.ntp.org.cn'
-	option authoritative '1'
+	# 旁路由：本机不是子网的 DHCP 权威（主路由 192.168.1.1 才是）。authoritative=1 会让
+	# dnsmasq 对本机「没见过」的主机名直接 NXDOMAIN 而不转上游，经主路由取址的设备就解析不到。
+	option authoritative '0'
 	option readethers '1'
 	option leasefile '/tmp/dhcp.leases'
 	option localservice '1'
@@ -29,22 +31,15 @@ config dnsmasq
 	option localuse '1'
 	list server '127.0.0.1#7874'
 
+# 旁路由：只关 DHCP/RA/NDP，不能整段 ignore='1' —— 那样 dnsmasq 不再绑到 br-lan，
+# 客户端就无法把 DNS 指向 192.168.1.2 走 OpenClash fake-ip，接管链路直接断。
+# 地址/网关/IPv6 仍由主路由下发；需要走代理的客户端自行把「网关 + DNS」填成 192.168.1.2。
 config dhcp 'lan'
 	option interface 'lan'
-	option start '5'
-	option limit '241'
-	option leasetime '12h'
-	option ra 'hybrid'
-	option dhcpv4 'server'
-	option max_preferred_lifetime '1800'
-	option max_valid_lifetime '3600'
-	option force '1'
-	option ra_default '1'
-	list ra_flags 'none'
-
-config dhcp 'wan'
-	option interface 'wan'
-	option ignore '1'
+	option dhcpv4 'disabled'
+	option ra 'disabled'
+	option dhcpv6 'disabled'
+	option ndp 'disabled'
 
 config odhcpd 'odhcpd'
 	option leasefile '/tmp/odhcpd.leases'
@@ -53,12 +48,7 @@ config odhcpd 'odhcpd'
 	option piodir '/tmp/odhcpd-piodir'
 	option hostsdir '/tmp/hosts'
 
-config host
-	option name 'WR3600H-4597'
-	option mac '80:AF:CA:88:45:97'
-	option ip '192.168.1.2'
-	option leasetime 'infinite'
-
+# 本机已不发 DHCP，以下 MAC→IP 绑定不再下发地址，只保留为 dnsmasq 的 .lan 名字解析记录。
 config host
 	option name 'WR3600H-4ADF'
 	option mac '80:AF:CA:88:4A:DF'
@@ -94,8 +84,4 @@ config host
 	option mac '90:F0:52:A8:82:7C'
 	option ip '192.168.1.17'
 	option leasetime 'infinite'
-
-config dhcp 'wan6'
-	option interface 'wan6'
-	option ignore '1'
 

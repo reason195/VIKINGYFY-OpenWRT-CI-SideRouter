@@ -63,8 +63,12 @@ jobs:
         env:
           GH_TOKEN: ${{github.token}}
         run: |
-          # 本项目仅构建 jdcloud_re-cs-07（IPQ60XX-WIFI-NO），与下方 config job 保持一致
-          LAST_TAG=$(gh release list --limit 30 --json tagName -q '.[].tagName' | grep '^IPQ60XX-WIFI-NO-VIKINGYFY-main-' | head -n 1)
+          # 本项目仅构建 jdcloud_re-cs-07（IPQ60XX-WIFI-NO），与下方 config job 保持一致。
+          # 必须再限定到「本仓库当前分支」产出的 release：tag 里的 main 是上游源码分支、不含本仓库分支，
+          # 不加这一段时旁路由分支会读到 main 最近一次的构建哈希，判成「上游无更新」而永不产出 release，
+          # 设备端则一直停在「没有属于本分支的 release」。WRT_REF 的净化方式必须与 WRT-CORE 完全一致。
+          WRT_REF="${GITHUB_REF_NAME//\//-}"
+          LAST_TAG=$(gh release list --limit 30 --json tagName -q '.[].tagName' | grep "^IPQ60XX-WIFI-NO-VIKINGYFY-main-$WRT_REF-" | head -n 1)
           if [ -n "$LAST_TAG" ]; then
             echo "sha=$(gh release view "$LAST_TAG" --json body -q .body | grep -oP '(?<=提交：)[0-9a-f]+' | head -n 1)" >> $GITHUB_OUTPUT
           else
@@ -147,7 +151,7 @@ jobs:
       #默认WIFI密码
       WRT_WORD: 12345678
       #默认地址
-      WRT_IP: 192.168.1.1
+      WRT_IP: 192.168.1.2
       #源码链接
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       #源码分支

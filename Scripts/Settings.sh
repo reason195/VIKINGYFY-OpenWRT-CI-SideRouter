@@ -99,11 +99,13 @@ if [ -d "$GITHUB_WORKSPACE/Files" ]; then
 fi
 
 #固件版本标识：写入本次构建的 release tag，供路由器端 auto_upgrade.sh 在 last_tag 丢失
-#（配置被 sysupgrade -n 清空）时自愈基线，避免"把最新版本当基线"造成永久落后一版。
-#tag 规则必须与 WRT-CORE.yml「Release Firmware」的 tag_name 完全一致。
+#（配置被 sysupgrade -n 清空）时自愈基线，避免"把最新版本当基线"造成永久落后一版；
+#同时它是 auto_upgrade 推导「本机所属 CI 分支前缀」的唯一依据。
+#tag 规则必须与 WRT-CORE.yml「Release Firmware」的 tag_name 完全一致
+#（含 WRT_REF=本仓库分支、WRT_BRANCH=上游源码分支，顺序不可调换）。
 if [ -n "$WRT_DATE" ]; then
 	mkdir -p ./files/etc
-	printf '%s\n' "$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_DATE" > ./files/etc/buffy-version
+	printf '%s\n' "$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_REF-$WRT_DATE" > ./files/etc/buffy-version
 	echo "buffy-version: $(cat ./files/etc/buffy-version)"
 else
 	echo "WARN: WRT_DATE 为空，跳过写入 /etc/buffy-version（路由器端退回旧基线行为）"
@@ -153,8 +155,10 @@ for p in pathlib.Path("./files").rglob("*"):
 PYEOF
 }
 
-inject_secret "PPPOE_USERNAME" "$PPPOE_USERNAME"
-inject_secret "PPPOE_PASSWORD" "$PPPOE_PASSWORD"
+# 旁路由不拨号：/etc/config/network 里已无 wan/pppoe 接口，也就没有 @@PPPOE_*@@ 占位符。
+# 改为可选，避免旧 Secret 未清理时仍卡住构建；占位符若不存在，注入逻辑自然空跑。
+inject_secret "PPPOE_USERNAME" "$PPPOE_USERNAME" 0
+inject_secret "PPPOE_PASSWORD" "$PPPOE_PASSWORD" 0
 inject_secret "DDNS_TOKEN" "$DDNS_TOKEN"
 inject_secret "HP_ADDRESS" "$HP_ADDRESS"
 inject_secret "HP_UUID" "$HP_UUID"

@@ -7,9 +7,12 @@
 # 静默失效三天（2026-09-15~17 日志只有"未启用"，无任何告警）。对策：配置段缺失时自动重建；
 # 未启用时退出行为不变，但每周一推一次告警（/tmp 标记节流，每 boot 最多一次）。
 # 基线：/etc/config/auto_upgrade 的 last_tag 记录当前运行的 release tag（/etc/config 为 sysupgrade
-# 默认保留目录，普通 /etc 文件升级会被清掉）。last_tag 为空时优先读固件内 /etc/buffy-version
+# 默认保留目录，普通 /etc 文件升级会被清掉）。last_tag 为空时读固件内 /etc/buffy-version
 # （构建期由 Scripts/Settings.sh 写入本固件 tag）作为"运行版本"基线，使配置被重置后仍能正确判断
-# 运行版本 vs 最新版本并升级；无该文件（旧固件）时退回旧行为：仅记录最新版本为基线、不刷机。
+# 运行版本 vs 最新版本并升级。
+# 分支隔离：候选 release 只接受与本机 /etc/buffy-version 同前缀（同 CI 分支）的 tag。该文件缺失或
+# 格式不符时无法判断归属，直接跳过刷机并每 boot 告警一次——绝不退化成"挑最新的刷"，因为仓库里
+# 同时存在主路由与旁路由两种镜像，刷错分支等于把本机网络配置整体换掉。
 # 版本发现走 releases.atom（免认证、无匿名限流，api.github.com 按出口 IP 60次/小时不可靠）；
 # 资产文件名可由 tag 确定性推导；sha256 校验读 release 附带的 SHA256SUMS.txt（WRT-CORE.yml 构建期生成，
 # 旧版 release 无此文件时不刷机、等下一个带校验清单的版本）。下载直连失败回退镜像。
@@ -20,8 +23,11 @@
 
 LOG="/tmp/auto_upgrade.log"
 
-REPO="reason195/VIKINGYFY-OpenWRT-CI"
-TAG_PREFIX="IPQ60XX-WIFI-NO-VIKINGYFY-main-"
+REPO="reason195/VIKINGYFY-OpenWRT-CI-SideRouter"
+# TAG_PREFIX 不在这里写死：由 /etc/buffy-version 在运行时剥掉日期段推导（见下方「分支前缀」一节）。
+# 原因：本仓库出现旁路由分支后，同一个 tag 命名空间里会同时存在两种角色完全不同的固件。
+# 常量前缀认不出区别，旁路由机器会刷到 main 产出的主路由镜像——192.168.1.2、DHCP 关闭、
+# wan 并入网桥这些改动被整体覆盖回去，且升级是自动发生的，排查成本极高。
 DEVICE="jdcloud_re-cs-07"
 BOARD="jdcloud,re-cs-07"
 FW="/tmp/fw-upgrade-auto.bin"
@@ -74,13 +80,44 @@ AVAIL=$(df -m /tmp | awk 'NR==2{print $4}')
 # 固件约 80–100MB，留足余量防下载中途 /tmp（tmpfs）耗尽；与 upgrade_firmware.py 的空间检查口径一致
 [ "${AVAIL:-0}" -ge 150 ] 2>/dev/null || fail "/tmp 可用空间不足（${AVAIL:-?}MB < 150MB）"
 
+# --- 0. 分支前缀：只刷与本机构建同 CI 分支的新版 ---
+# tag 形如 IPQ60XX-WIFI-NO-VIKINGYFY-main-<CI分支>-<YY.MM.DD-HH.MM.SS>。CI 分支名自身可能含 '-'
+# （feat/side-router-optimization → feat-side-router-optimization），所以不能按「数第几段」截取，
+# 只能按末尾的日期格式剥离。推导不出来就停更：宁可一直不升级，也不能拿别的分支的镜像
+# 覆盖本机——主路由/旁路由两种角色的 network、dhcp、防火墙是整套互换的。
+RUNNING=$(cat /etc/buffy-version 2>/dev/null)
+TAG_PREFIX=""
+case "$RUNNING" in
+	# 结尾必须是完整的 -YY.MM.DD-HH.MM.SS，否则视为标识格式不符
+	*[0-9][0-9].[0-9][0-9].[0-9][0-9]-[0-9][0-9].[0-9][0-9].[0-9][0-9])
+		# 只剥日期本体、保留它前面那个横杠：前缀要以 '-' 结尾，第 1 节的 SUFFIX=${TAG#"$TAG_PREFIX"}
+		# 才会正好剩一个日期。若把 '-' 一起吃掉，资产名会变成 ...sysupgrade--26.09.17-...（多一个横杠）。
+		TAG_PREFIX=$(printf '%s\n' "$RUNNING" | sed 's/[0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]-[0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]$//')
+		;;
+esac
+if [ -z "$TAG_PREFIX" ] || [ "$TAG_PREFIX" = "$RUNNING" ]; then
+	log "无法从 /etc/buffy-version 推导 release 前缀（内容：${RUNNING:-文件缺失}），跳过自动刷机"
+	# 每 boot 只推一次（/tmp 重启即清），避免 cron 每天重复告警刷屏
+	if [ ! -f /tmp/.auto_upgrade_noprefix ]; then
+		touch /tmp/.auto_upgrade_noprefix
+		notify "路由器自动升级已跳过" "本机缺少可用的构建标识 /etc/buffy-version，判断不出属于哪个 CI 分支。为避免刷到别的分支的固件（主路由/旁路由镜像会整体覆盖网络配置），自动刷机已跳过。手动升级请显式指定标签：python3 Scripts/upgrade_firmware.py --tag <release 标签>；刷入带构建标识的镜像后本功能自动恢复。"
+	fi
+	exit 0
+fi
+log "本机 release 前缀：$TAG_PREFIX"
+
 # --- 1. 从 releases.atom 发现最新匹配前缀的 tag ---
 FEED=$(curl -fsS -m 30 -A "auto_upgrade.sh" "https://github.com/$REPO/releases.atom" 2>/dev/null) \
 	|| fail "拉取 releases.atom 失败"
 TAG=$(printf '%s' "$FEED" \
 	| sed -n 's#.*<id>tag:github.com,2008:Repository/[0-9]*/\([^<]*\)</id>#\1#p' \
 	| grep "^$TAG_PREFIX" | head -n1)
-[ -n "$TAG" ] || fail "atom 中未找到前缀 $TAG_PREFIX 的 release"
+if [ -z "$TAG" ]; then
+	# 不算故障：本分支可能一次都还没构建过（新分支首日必然如此）。走 fail() 会每天推一条告警，
+	# 与真正的下载/校验失败混在一起，反而掩盖出问题的那一类。
+	log "atom 中没有属于本分支（$TAG_PREFIX）的 release，等待下次构建"
+	exit 0
+fi
 
 SUFFIX=${TAG#"$TAG_PREFIX"}
 NAME="qualcommax-ipq60xx-${DEVICE}-squashfs-sysupgrade-${SUFFIX}.bin"
@@ -89,21 +126,14 @@ BASE="https://github.com/$REPO/releases/download/$TAG"
 # --- 2. 与基线比对 ---
 CUR=$(uci -q get 'auto_upgrade.@auto_upgrade[0].last_tag')
 if [ -z "$CUR" ]; then
-	# 基线自愈：构建期由 Settings.sh 写入 /etc/buffy-version（内容为本固件的 release tag）。
+	# 基线自愈：/etc/buffy-version 由构建期 Settings.sh 写入，内容就是本固件的 release tag。
 	# 必须以"运行版本"为基线才能判断是否需要升级；否则会把最新版本记为基线，
 	# 造成配置被重置后永远落后一版且此后再不升级（2026-09-17 排障定位到的第二个缺陷）。
-	RUNNING=$(cat /etc/buffy-version 2>/dev/null)
-	if [ -n "$RUNNING" ]; then
-		CUR="$RUNNING"
-		uci set "auto_upgrade.@auto_upgrade[0].last_tag=$CUR"
-		uci commit auto_upgrade
-		log "基线缺失，已按固件内构建版本初始化：$CUR"
-	else
-		uci set "auto_upgrade.@auto_upgrade[0].last_tag=$TAG"
-		uci commit auto_upgrade
-		log "首次运行且固件无版本标识：记录当前最新版本 $TAG 为基线（不刷机）"
-		exit 0
-	fi
+	# 能走到这里 RUNNING 必然非空——第 0 节已用推导前缀并在缺失时提前退出。
+	CUR="$RUNNING"
+	uci set "auto_upgrade.@auto_upgrade[0].last_tag=$CUR"
+	uci commit auto_upgrade
+	log "基线缺失，已按固件内构建版本初始化：$CUR"
 fi
 [ "$TAG" != "$CUR" ] || { log "已是最新（$TAG），退出"; exit 0; }
 

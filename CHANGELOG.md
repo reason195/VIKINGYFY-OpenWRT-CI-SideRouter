@@ -1,3 +1,75 @@
+# 变更记录（2026-11-05）：主路由形态改旁路由（不拨号、不发 DHCP，只做代理网关）
+
+**诉求**：新分支 `feat/side-router-optimization` 把固件从主路由改成旁路由，仍由 OpenClash 接管代理。本机 `192.168.1.2`、主路由 `192.168.1.1`；`.2` 原先静态绑给 `WR3600H-4597`，该设备已停用，绑定随之删除。客户端接管方式选定为「本机停用 DHCP，需要走代理的设备手动把网关+DNS 指到 192.168.1.2」。
+
+## 一、网络与 DHCP
+
+- `Files/etc/config/network`：`lan` 由 `192.168.1.1` 改 `192.168.1.2/24` 并补 `gateway 192.168.1.1`。旁路由没有 PPPoE、不会下发动态默认路由，**gateway 漏写＝刷机后本机无出口，LuCI 连不上也刷不回去**。删除 `wan`(pppoe)/`wan6`(dhcpv6)/`modem` 三个接口；`lan` 另配 `dns 192.168.1.1 + 223.5.5.5`，让本机自身解析不经过 dnsmasq→clash 那条链（首启拉订阅、acme 签发都发生在 OpenClash 就绪之前）。原 `wan` 物理口并入 `br-lan`，4 个口全是交换口，上行线插哪个口都行。去掉 `ip6assign`：无 PD 可派，IPv6 的 RA 与默认路由由主路由下发。
+- `Files/etc/config/dhcp`：`dhcp lan` 从「DHCP server + ra hybrid」改为 `dhcpv4/ra/dhcpv6/ndp` 全部 `disabled`。**不能写成 `ignore '1'`** —— 那会把 dnsmasq 整个从 br-lan 摘掉，客户端就无法把 DNS 指向 `192.168.1.2` 走 fake-ip，接管链路当场断。`authoritative` 1→0：本机不再是子网 DHCP 权威，留着会让 dnsmasq 对经主路由取址的设备名直接回 NXDOMAIN。删掉 `dhcp wan`/`dhcp wan6` 两段与 `WR3600H-4597` 的 host 绑定；其余 host 保留，只当 `.lan` 名字解析记录用。
+
+## 二、防火墙与内核参数
+
+- `Files/etc/uci-defaults/92-buffy-firewall.sh`：清除 `wan` 区域与 `src='wan'` / `dest='wan'` 的 `Allow-WAN-*-v6`、端口转发类规则。network 里已无 `wan/wan6`，而防火墙包默认生成的 wan 区域仍写着 `network 'wan wan6'`，这种悬空引用会让 fw4 拒绝加载整张表——**连 `lan` 转发一起失效，表现为客户端全断且日志无显式报错**。保留硬件流卸载：旁路由是同口进出转发，没有 flowtable 时每一包都要过完整 ruleset，吞吐直接掉一个数量级。删除匿名段会使其余段前移，故按「删一段就从头重扫」实现，上限 32 轮防 uci 异常时空转（不是配置规模上限——10 条 `src='wan'` 规则的用例已验证能扫干净）。
+- `Files/etc/sysctl.d/zz-network-optimizations.conf`：补 `ip_forward=1`、`ipv6.conf.all.forwarding=1`、`rp_filter=0`（`all` 与 `default` 都写，`default` 会拷给之后新出现的接口）。`rp_filter` 是旁路由最常见的「看着一切正常实际不通」根因：客户端流量从 br-lan 进、又从同一个 br-lan 出，严格反向路径过滤会按非对称路径丢包。
+
+## 三、随之失效的下游项
+
+- DDNS 整体**删除**（先按「停用」实现，复查时确认旁路由永远取不到公网地址、留着只会每天失败重试刷日志，故直接移除）：删 `Files/etc/config/ddns`，`Config/GENERAL.txt` 摘掉 `ddns-scripts` / `ddns-scripts-duckdns` / `luci-app-ddns` / `luci-i18n-ddns-zh-cn` 四个包。
+  - **acme 与 `DDNS_TOKEN` 保留**：`validation_method dns` + `dns_duckdns` 只写 `_acme-challenge` 的 TXT 记录，不依赖域名的 A/AAAA，所以证书签发/续期照常成立，用的仍是同一个 token（`Files/etc/config/acme` 里的占位符还在，secret 仍属必需项）。
+  - 因此 `openclash_custom_fake_filter.list` 的 `+.duckdns.org` 必须留着——acme 直连 DuckDNS API，落入 fake-ip 会失败；`rc.local` 的自愈逻辑同理保留，两处注释里「DDNS」改为「acme(DuckDNS API)」。
+  - 连带清理：`health_check.sh` 去掉「DDNS 域名可解析」检测（第 2 节只剩 LE 证书）、`verify_flash.py` 去掉 `uci show ddns` 抽查、`crontabs/root` 体检注释、`lib-buffy.sh` 的 `DOMAIN` 语义改为「证书域名」、`91-buffy-uhttpd.sh` 注释。`README.md` 补外部访问的前置条件：本固件不再维护解析，要么主路由/别处把记录指到入口地址再配 IPv4 转发或 IPv6 入站放行。
+- UPnP 整体**删除**：先按「停用」实现（`enabled='0'`），确认它是负资产后连包一起摘——本机不是 NAT 边缘设备，映射对入向流量无效，却仍会在 LAN 上应答 SSDP 跟主路由抢当 IGD（客户端一旦选中本机，PT/下载软件的端口映射静默失效）；且没有 wan 接口时 `ext_ifname` 推导不出出口设备，miniupnpd 本身也可能起不来。删 `Files/etc/config/upnpd`，`Config/GENERAL.txt` 去掉 `luci-app-upnp`。UPnP 请回主路由开。
+- FullCone **删除**：`Config/GENERAL.txt` 摘掉 `luci-app-fullconenat-sonic` / `luci-i18n-fullconenat-sonic-zh-cn` / `kmod-nft-fullcone`，`92-buffy-firewall.sh` 的 `fullcone6` 由「置 1」改为**只删不写**。旁路由不做 NAT，fullcone 没有作用对象；那行 `uci delete` 保留不是多余——`--keep-config` 升级会把旧镜像写下的 `fullcone6='1'` 带过来，而模块已不在，fw4 会去引用不存在的 nft fullcone 表达式。`verify_flash.py` 的 92 检查相应改成断言「`fullcone6` 必须为空」，`Tests/test_side_router_firewall.sh` 新增用例 7 专门锁这条清理逻辑。
+- 保留未动的重复栈：`luci-app-homeproxy` / `luci-app-nikki` / `sing-box`（含 `HP_ADDRESS`/`HP_UUID`/`SINGBOX_SS_PASSWORD`）与 filebrowser、diskmanager、partexp、ksmbd、ttyd、vnstat2 等个人功能包按决定不删。多套代理同开会互相抢转发和 DNS，只用 OpenClash 时别启用另外两套。
+- `Files/etc/uci-defaults/90-buffy-dropbear.sh`、`91-buffy-uhttpd.sh`：只改注释（不再声称「经 WAN(IPv6) SSH」「http://192.168.1.1 访问」），行为不变。
+
+## 四、工具、体检与 CI 默认值
+
+- `Scripts/upgrade_firmware.py`、`Scripts/verify_flash.py`：`--host` / `ROUTER_HOST` 默认 `192.168.1.1` → `192.168.1.2`，否则一键刷机/校验会连到主路由。
+- `.github/workflows/QCA-ALL.yml`：`WRT_IP` 192.168.1.1 → 192.168.1.2（该值进 `config_generate` 的默认地址与 release 正文「登录地址」）。
+- `Scripts/Settings.sh`：`PPPOE_USERNAME`/`PPPOE_PASSWORD` 由必需 secret 降为可选（`inject_secret ... 0`）。network 里已无 `@@PPPOE_*@@` 占位符，仍按必需校验会在旧 secret 未清理时凭空卡住构建。
+- `Files/usr/share/buffy/health_check.sh`：第 1 节改为出口连通性，删掉 `pppoe-wan/wan6` 的 IPv6 源地址探测，改成观测 v6 默认路由、缺失只 `warn`；第 4 节断言整体替换为旁路由转发链路：fw4 表已加载、无 `wan` 区域残留、`lan` forward=ACCEPT、`ip_forward=1`、`rp_filter=0`。（第 2 节的 DDNS 域名检测随包移除一并删掉，见第三节。）
+- `Scripts/verify_flash.py`：92-buffy-firewall 检查项同步（`wan forward=DROP` + 两条 v6 放行 → `lan forward=ACCEPT` + wan 区域/规则残留为 0）；`RUNTIME_CHECKS` 新增「旁路由转发就位」，`dnsmasq 关键项` 补 `authoritative`。
+- `README.md`：新增「旁路由形态说明」表（含 IPv6 不走本机这条已知限制：本机不发 RA，且内核在 `forwarding=1` 时不采纳 RA，所以客户端 IPv6 由主路由直接下发、不经本机也不走代理）。
+
+## 五、release 分支隔离（旁路由不再被主路由镜像自动覆盖）
+
+**问题**：`auto_upgrade.sh` 里 `TAG_PREFIX` 写死 `IPQ60XX-WIFI-NO-VIKINGYFY-main-`，而 tag 中的 `main` 是**上游 immortalwrt 的源码分支**（`QCA-ALL.yml` 的 `WRT_BRANCH`，被 `WRT-CORE.yml:133` 用来 clone 源码），与本仓库分支毫无关系。仓库出现旁路由分支后，两种角色互斥的镜像落在同一个 tag 命名空间里——cron 会把旁路由自动刷回 main 产出的主路由版本（`192.168.1.2`、DHCP 关闭、wan 并网桥被整体还原），而且无人值守、日志里看不出异常。
+
+- `.github/workflows/QCA-ALL.yml`：「Get Last Built Commit」的 `LAST_TAG` grep 也加上 `$WRT_REF`（净化方式与 WRT-CORE 逐字一致）。这一步原先只按 `^IPQ60XX-WIFI-NO-VIKINGYFY-main-` 全局取最新 release，读的是**别的分支**的构建哈希——旁路由分支会判成「上游无更新」而直接跳过编译，于是永远产不出本分支的 release，设备端就长期停在「没有属于本分支的 release」。分支无 release 时该步取空值、按「有更新」处理，首次构建不会死锁。
+- `.github/workflows/WRT-CORE.yml`：Initialization Values 新增 `WRT_REF=${GITHUB_REF_NAME//\//-}`（`/`→`-`，保证 tag 与 release 下载 URL 的段内不含斜杠）；`tag_name` 变为 `$WRT_CONFIG-$WRT_INFO-$WRT_BRANCH-$WRT_REF-$WRT_DATE`；`PREV_TAG` 的 grep 前缀同步加上 `$WRT_REF`（否则变更日志会跨分支算提交范围）；release 正文加「CI 分支」一行。
+- `Scripts/Settings.sh`：`/etc/buffy-version` 的拼装同步加 `$WRT_REF`。它与 `tag_name` 必须逐字一致——不一致时设备剥日期得到的前缀匹配不到任何 release，自动升级会静默停在"没有属于本分支的版本"。
+- `Files/usr/share/buffy/auto_upgrade.sh`：删掉写死的 `TAG_PREFIX`，改为运行时从 `/etc/buffy-version` 剥尾部日期推导。CI 分支名自身含 `-`，所以只能按日期格式剥尾、不能按段数截取；且**必须保留日期前那个横杠**，否则 `SUFFIX=${TAG#"$TAG_PREFIX"}` 会多带一个 `-`，资产名拼成 `…sysupgrade--26.11.05-….bin`。
+  - 标识缺失/格式不符 → 跳过刷机 + 每 boot 告警一次（`/tmp/.auto_upgrade_noprefix` 节流）。删掉了原来「无标识就把最新版本记为基线、不刷机」的兜底：那条路径等于承认"任何分支都能刷"，与本次改动的目的相反，也让 `--keep-config` 场景下的基线可能被写成别的分支的 tag。
+  - 「atom 里没有本分支的 release」由 `fail()` 改成 `log + exit 0`：新分支第一天必然没有 release，走 `fail()` 会每天推一条告警，把真正的下载/校验失败淹没掉。
+- `Scripts/upgrade_firmware.py`：新增 `running_prefix()`；连上路由器并校验 `board_name` 后按本机前缀选版，候选不属于本分支时自动改选同分支 release（并重新取 digest）。读不到有效标识且未显式 `--tag` → 拒绝自动选版、退出码 2。显式 `--tag` 跨分支**放行但打印警告**——主路由转旁路由的那一次刷机正需要它，一刀切会让改造本身刷不进去。
+
+## 六、测试
+
+- `Tests/test_auto_upgrade.sh`：**25 → 41 passed**。新增用例 8–11：旁路由机器忽略排在最前的 main release（朴素取首条就会刷错分支）、主路由机器忽略旁路由 release、本分支无 release 时 `exit 0` 不告警、标识结尾非日期则跳过；用例 3 的语义由「旧固件兜底记基线」改为「无标识跳过刷机 + 按 boot 节流告警」。
+  - fixture 踩到一个坑：`set_atom` 起初把 `<id>` 与 `<title>` 挤在同一行，而被测脚本用 `sed 's#.*<id>…</id>#\1#p'` **只替换匹配段并保留行尾**，于是提取出的 tag 带上 `<title>…</title></entry>` 尾巴，前缀比较与资产名全部错位。真实 atom 的 `<id>` 独占一行，测试必须照此生成。另：断言里不能写 `/etc/buffy-version` 这类字面路径——`rewrite()` 会把脚本内所有绝对路径重写到沙箱，日志里读到的是沙箱路径。
+- `Tests/test_upgrade_firmware.py`：**28 → 35 passed**。加 `RunningPrefixTest`（旧格式、含 `-` 的新分支名、无日期、空/None、尾部换行）与 `BranchIsolationTest`（自动改选同分支资产、无标识拒绝自动选版 rc=2、`--tag` 跨分支放行且有警告）。既有 `test_aborts_on_router_side_sha256_mismatch` 的 `ssh_run` mock 序列必须插一位——main() 多了一次 `/etc/buffy-version` 读取，否则后续 df/sha256 全部错位。
+- `Tests/test_side_router_firewall.sh`：**32 passed / 0 failed**。
+- 汇总：5 个 shell 套件 **134 passed / 0 failed**（41 + 18 + 18 + 25 + 32），Python **35 passed**。
+- `sh -n` 通过 `92-buffy-firewall.sh`、`health_check.sh`；`python -m py_compile` 通过 `verify_flash.py`；改动的 UCI 配置（`network`/`dhcp`）行格式校验通过，`Files/` 里 `@@DDNS_TOKEN@@` 仅剩 `etc/config/acme` 一处引用（证书仍需要），`@@PPPOE_*@@` 随接口一起消失。
+- **未做实机验证**：`gateway` 写死、`wan` 口并入网桥、fw4 悬空引用清除这三项只有真机刷入才能确认。首次刷机请保证有串口或 U-Boot 恢复路径，并先把主路由侧 `WR3600H-4597` 的残留租约释放掉，避免 `.2` 短时冲突。
+- **未过构建验证**：包裁剪只做了静态核对——`Scripts/Packages.sh` 仅替换 feed 源，装什么完全由 `Config/*.txt` 决定；`Handles.sh` 的 homeproxy 资源预置块自带 `[ -n "$HP_DIR" ]` 判断，不动它也不会因缺包报错。摘掉的三个包都是应用/kmod、没有被别的东西 `depends`，但 kconfig 是否干净仍要等 CI 实跑一次。
+- **同仓库双分支遗留的两个坑**（最终靠拆独立仓库解决，见第七节）：GitHub 的 schedule 只在默认分支运行，`feat/*` 分支不会每日自动构建；`Auto-Clean.yml` 的 `releases_keep_latest: 5` 是全局保留数、不区分分支，两个分支都发布时 5 条很快被其中一个占满，另一个分支的 release 会连 tag 一起删掉，设备端从此找不到同分支版本。
+
+
+## 七、拆分为独立仓库（旁路由专用）
+
+**决定**：不再让主路由与旁路由共用一个仓库、一套 release 命名空间。旁路由内容作为 `main` 推入新仓库 `reason195/VIKINGYFY-OpenWRT-CI-SideRouter`（public）。
+
+- 为什么必须 public：`auto_upgrade.sh` 拉 `releases.atom` 是**免认证**的（脚本注释里写明是为避开匿名 API 60 次/小时的限流）。私有仓库该 URL 需要登录，设备端会直接找不到 release，自动升级整条链路失效。
+- 代码侧只有两处硬编码要改：`Files/usr/share/buffy/auto_upgrade.sh` 的 `REPO`、`Scripts/upgrade_firmware.py` 的 `DEFAULT_REPO`。其余引用都走 `GITHUB_REPOSITORY`/相对路径自动适配；`Config/` 文件名与 tag 前缀不变，所以 `/etc/buffy-version`、资产名推导整条链路无需调整。
+- 第五节的 `$WRT_REF` 分支隔离**保留**：新仓库默认分支是 `main`，tag 变成 `…-VIKINGYFY-main-main-<日期>`，设备端前缀推导照常成立；日后在本仓库内再开角色分支时它仍然有效。
+- 分库同时消除上面两个坑：schedule 跑在本仓库默认分支，清理配额也只统计本仓库的 release。
+- 必须手动做的一件事：GitHub API 读不到已有 secret 的**值**，跨仓库无法搬运。新仓库要重配 `ROUTER_ROOT_PASSWORD` / `DDNS_TOKEN` / `HP_ADDRESS` / `HP_UUID` / `MAIN_AIRPORT_SUB` / `BACKUP_AIRPORT_SUB`（缺任一即终止构建）；`TELEGRAM_*`、`SINGBOX_SS_PASSWORD`、`PPPOE_*` 可选。
+- 长期代价：`Files/` 的公共 bugfix（OpenClash 认证迁移、凭据快照、fw4 悬空引用这类）现在得在两个仓库各自同步——这是用隔离换来的，没有额外成本可省。
+
+
+
 # 变更记录（2026-11-05）：刷机默认不保留配置（sysupgrade -n）
 
 **诉求**：下次刷机不保留配置。此前两条刷机路径（PC 端 `upgrade_firmware.py`、路由器端 cron `auto_upgrade.sh`）默认都是「保留配置」，而保留路径有个已知死结：`/etc/rc.local` 在 `/lib/upgrade/keep.d/base-files-essential` 的永久保留清单里，保留升级会让它停在旧固件版本、新版的开机钩子永远进不了运行层（2026-09-29 实证）。改成默认不保留，镜像里的 `/etc` 才真正生效。
