@@ -93,9 +93,8 @@ if [ -d "$GITHUB_WORKSPACE/Files" ]; then
 	cp -rf $GITHUB_WORKSPACE/Files/. ./files/
 	#敏感文件权限修正（git 只保留可执行位，需恢复 0600）
 	chmod 600 ./files/etc/shadow ./files/etc/ppp/chap-secrets ./files/etc/buffy-notify.conf 2>/dev/null
-	#脚本执行位兜底：cron 直接执行这些脚本，git 索引漏 644 会烤进固件导致静默失败（rc=126 无告警）；
-	#acme dnsapi 插件同理由 source/直接执行两种加载方式，一并兜底
-	chmod +x ./files/usr/share/buffy/*.sh ./files/usr/lib/acme/client/dnsapi/*.sh 2>/dev/null
+	#脚本执行位兜底：cron 直接执行这些脚本，git 索引漏 644 会烤进固件导致静默失败（rc=126 无告警）
+	chmod +x ./files/usr/share/buffy/*.sh 2>/dev/null
 fi
 
 #固件版本标识：写入本次构建的 release tag，供路由器端 auto_upgrade.sh 在 last_tag 丢失
@@ -159,7 +158,6 @@ PYEOF
 # 改为可选，避免旧 Secret 未清理时仍卡住构建；占位符若不存在，注入逻辑自然空跑。
 inject_secret "PPPOE_USERNAME" "$PPPOE_USERNAME" 0
 inject_secret "PPPOE_PASSWORD" "$PPPOE_PASSWORD" 0
-inject_secret "DDNS_TOKEN" "$DDNS_TOKEN"
 inject_secret "HP_ADDRESS" "$HP_ADDRESS"
 inject_secret "HP_UUID" "$HP_UUID"
 # 告警通道（可选）：缺失时占位符置空、路由器侧静默跳过，不阻断构建

@@ -3,7 +3,7 @@
 # Copyright (C) 2026 VIKINGYFY
 
 # health_check.sh - 路由器全面体检（非 OpenClash 项，旁路由形态）
-# 检查：出口连通性(IPv4 经主路由) / DNS 解析 / Let's Encrypt 证书 /
+# 检查：出口连通性(IPv4 经主路由) / DNS 解析 /
 #       dnsmasq 备用上游 / 防火墙转发链路(lan forward + ip_forward + rp_filter) / 硬件流量卸载。
 # 用法：手动 /usr/share/buffy/health_check.sh，或每日 cron（见 /etc/crontabs/root）。
 # 任一 FAIL：退出码非 0 并推 ntfy/Telegram 告警；日志：/tmp/health_check.log
@@ -56,21 +56,7 @@ else
 	bad "DNS 解析失败 (223.5.5.5)"
 fi
 
-# ---- 2. Let's Encrypt 证书 ----
-# DDNS 已从固件移除（旁路由不是边缘设备，公网地址发布不归本机）。acme 走 DNS-01，
-# 只写 _acme-challenge 的 TXT 记录、不依赖域名的 A/AAAA，因此签发与续期照常成立；
-# 域名当前是否解析到本网络，本脚本不再检测。
-if [ -f "$LEAF" ]; then
-	if cert_expires_within "$LEAF" 1209600; then
-		bad "LE 证书临期/过期（剩余 <=14 天）"
-	else
-		ok "LE 证书有效（剩余 >14 天）"
-	fi
-else
-	bad "LE 证书缺失 ($LEAF)"
-fi
-
-# ---- 3. dnsmasq 备用上游 ----
+# ---- 2. dnsmasq 备用上游 ----
 # rc.local 写到生成的 dnsmasq conf 里的 conf-dir（本机为 /tmp/dnsmasq.<cfgid>.d，非 /tmp/dnsmasq.d），
 # 用 glob 兜底定位真实路径，避免按固定目录查漏报。
 FALLBACK=""
@@ -99,7 +85,7 @@ else
 	bad "本地 DNS 解析失败 (127.0.0.1)"
 fi
 
-# ---- 4. 防火墙转发链路（旁路由） ----
+# ---- 3. 防火墙转发链路（旁路由） ----
 # 旁路由形态下没有 wan/wan6 接口，但防火墙包默认生成的 wan 区域仍写着 network 'wan wan6'。
 # 这种悬空引用会让 fw4 拒绝加载整张表——连 lan 转发一起失效，客户端全断且无明显报错。
 # 92-buffy-firewall.sh 负责清除，这里验证清除结果与转发是否真的就位。
@@ -148,7 +134,7 @@ else
 	bad "IPv6 转发未开启"
 fi
 
-# ---- 5. 硬件流量卸载 ----
+# ---- 4. 硬件流量卸载 ----
 SW=$(uci -q get firewall.@defaults[0].flow_offloading 2>/dev/null)
 HW=$(uci -q get firewall.@defaults[0].flow_offloading_hw 2>/dev/null)
 if [ "$SW" = "1" ] && [ "$HW" = "1" ]; then

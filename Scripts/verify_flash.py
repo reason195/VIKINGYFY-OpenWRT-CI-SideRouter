@@ -208,7 +208,7 @@ def find_named_section(d, type_prefix, name):
 RUNTIME_CHECKS = [
     ("固件版本", "cat /etc/openwrt_release"),
     ("内核", "uname -a"),
-    ("OpenClash 关键项", "uci show openclash 2>/dev/null | grep -E 'en_mode|operation_mode|redirect_dns|enable_respect_rules|core_type|core_version|github_address_mod|enable_geoip_dat|enable_custom_domain_dns_server|custom_domain_dns_server|skip_proxy_address|disable_masq_cache|custom_fakeip_filter|china_ip_route|log_level|enable=|config_path'"),
+    ("OpenClash 关键项", "uci show openclash 2>/dev/null | grep -E 'en_mode|operation_mode|redirect_dns|enable_respect_rules|core_type|core_version|github_address_mod|enable_geoip_dat|skip_proxy_address|disable_masq_cache|custom_fakeip_filter|china_ip_route|log_level|enable=|config_path'"),
     ("核心与规则集", "ls -la /etc/openclash/core/clash_meta 2>/dev/null; ls /etc/openclash/rule_provider/ 2>/dev/null | wc -l; wc -c /etc/openclash/config/MihomoPro.yaml 2>/dev/null"),
     ("clash 进程与端口", "pidof clash; netstat -tln 2>/dev/null | grep -E ':(9090|7890|7891|7893|7874)'"),
     ("开机自检", "ls -la /etc/.openclash-bootstrap-done 2>/dev/null; cat /tmp/boot_selfcheck.log 2>/dev/null | tail -3"),
@@ -230,15 +230,14 @@ def check_uci_defaults():
     results.append(("90-buffy-dropbear.sh", not bound,
                     "Interface/DirectInterface 已解绑" if not bound else f"仍存在接口绑定: {bound}"))
 
-    # 91-buffy-uhttpd.sh：LuCI 不强制 HTTPS 跳转（LAN 走 HTTP），保留 443 监听供域名 + LE 证书访问
+    # 91-buffy-uhttpd.sh：关掉 HTTP→HTTPS 强制跳转（本机已无可信证书，LAN 直接走 HTTP）
     d = uci_dump("uhttpd")
     rh = d.get("uhttpd.main.redirect_https")
     lh = d.get("uhttpd.main.listen_https")
-    if not isinstance(lh, list):
-        lh = [lh]
-    ok = rh is None and "0.0.0.0:443" in lh and "[::]:443" in lh
+    ok = rh is None
     results.append(("91-buffy-uhttpd.sh", ok,
-                    f"redirect_https={rh!r}(应为None，即无强制跳转) listen_https={lh!r}"))
+                    f"redirect_https={rh!r}(应为None，即无强制跳转) "
+                    f"listen_https={lh!r}(沿用软件包默认，仅记录)"))
 
     # 92-buffy-firewall.sh：硬件流卸载 + 清除引用已删除接口的 wan 区域/规则 + 清掉残留 fullcone6
     d = uci_dump("firewall")
@@ -266,7 +265,6 @@ def check_uci_defaults():
         "enable_respect_rules": "1", "log_level": "error", "china_ip_route": "1",
         "core_type": "Meta", "core_version": "linux-arm64",
         "github_address_mod": "https://testingcf.jsdelivr.net/", "enable_geoip_dat": "1",
-        "enable_custom_domain_dns_server": "1", "custom_domain_dns_server": "223.5.5.5",
         "custom_fakeip_filter": "1", "skip_proxy_address": "1",
         "enable_meta_sniffer": "1", "enable_meta_sniffer_pure_ip": "1",
         "geo_auto_update": "1", "geoip_auto_update": "1", "geosite_auto_update": "1",

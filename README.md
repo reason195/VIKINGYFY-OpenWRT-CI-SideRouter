@@ -11,7 +11,7 @@
 - 构建：每日凌晨 4:00（北京时间）检查上游 [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt)（main 分支），有更新才自动编译并发布 release；旧 release 自动清理只留 5 个（本仓库独立计数）
 
 > ⚠️ 新仓库首次构建前必须重配 Secrets，缺失会直接终止构建：
-> `ROUTER_ROOT_PASSWORD`、`DDNS_TOKEN`（acme DNS-01 用）、`HP_ADDRESS`、`HP_UUID`、`MAIN_AIRPORT_SUB`、`BACKUP_AIRPORT_SUB`。
+> `ROUTER_ROOT_PASSWORD`、`HP_ADDRESS`、`HP_UUID`、`MAIN_AIRPORT_SUB`、`BACKUP_AIRPORT_SUB`。
 > 可选：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`SINGBOX_SS_PASSWORD`；`PPPOE_USERNAME`/`PPPOE_PASSWORD` 旁路由已不拨号，降为可选、可不配置。
 > GitHub API 读不到 secret 的**值**，跨仓库无法自动搬运，只能手动重设一遍。
 
@@ -25,17 +25,17 @@
 | DNS | 本机 dnsmasq 继续在 br-lan 上服务，上游指向 OpenClash（`127.0.0.1#7874`），`authoritative` 已关 |
 | 接管方式 | 需要走代理的客户端**手动**把「网关 + DNS」填 `192.168.1.2`；不填的照旧直连主路由 |
 | IPv6 | 本机不发 RA，且内核在 `forwarding=1` 时不采纳 RA → 本机一般无全局 IPv6；客户端 IPv6 由主路由直接下发、**不经本机、不走代理** |
-| DDNS | **已从固件移除**：`/etc/config/ddns` 与 `luci-app-ddns`/`ddns-scripts`/`ddns-scripts-duckdns`/其中文包一起删。旁路由不是边缘设备，也没有公网接口可取地址 |
+| DDNS + 证书 | **整体移除**：`/etc/config/ddns`、`/etc/config/acme`、`Files/usr/lib/acme/`（vendored dns_duckdns 插件）、`cert_check.sh` 与相关包全删。旁路由不是边缘设备，既取不到公网地址，也没有对外服务的域名 |
 | 防火墙 | 清除引用已删除接口的 `wan` 区域与 `Allow-WAN-*-v6` 规则（残留会让 fw4 整表加载失败）；保留硬件流卸载；`rp_filter=0` 放行同口非对称转发。FullCone 已随 NAT 角色一起移除 |
 
-外部访问：本固件不再维护域名解析。若仍要用 `reason195.duckdns.org` 从外面进 LuCI，得两步都齐——① 由主路由（或别处）把记录解析到你的入口地址；② IPv4 在主路由做端口转发到 `192.168.1.2:443`（外部端口建议换 `8443`，家宽普遍封 443 入站），或 IPv6 在主路由防火墙放行入站（IPv6 无 NAT，是「放行」不是「转发」）。
-证书不受影响：acme 走 DNS-01，只写 `_acme-challenge` 的 TXT 记录、不依赖 A/AAAA，用的仍是同一个 `DDNS_TOKEN`。
+外部访问：本固件不再有 DDNS 与 Let's Encrypt 证书链，管理入口就是 `http://192.168.1.2`（`redirect_https` 已强制关闭——没有可信证书时跳转只会 `ERR_CERT_AUTHORITY_INVALID`）。若仍要从外网进管理页，得自己补齐三件事：① 由主路由或别处把域名解析到你的入口地址；② 在主路由做端口转发到 `192.168.1.2`（80 明文，或 443——443 是 uhttpd 软件包默认的自签证书，浏览器必然告警）；③ 想要可信证书需另找方案（反向代理或内网穿透自带 TLS）。
 
 ### 旁路由下已移除的软件包
 
 | 包 | 移除原因 |
 |---|---|
-| `ddns-scripts` / `ddns-scripts-duckdns` / `luci-app-ddns` / `luci-i18n-ddns-zh-cn` | 旁路由没有公网接口可取地址，DDNS 永远失败；`DDNS_TOKEN` 与 `Files/etc/config/acme` 保留给证书 |
+| `ddns-scripts` / `ddns-scripts-duckdns` / `luci-app-ddns` / `luci-i18n-ddns-zh-cn` | 旁路由没有公网接口可取地址，DDNS 永远失败 |
+| `acme` / `luci-app-acme` / `luci-i18n-acme-zh-cn` + `Files/usr/lib/acme/` | Let's Encrypt 证书服务于「域名 + 外网访问」，DDNS 移除后域名不再指向本机，证书失去用途；连带删掉 `cert_check.sh`、cron 里的三行证书任务、`lib-buffy.sh` 的 `DOMAIN`/`LEAF`/`cert_expires_within`，以及 OpenClash 的「第二 DNS 服务器」域名列表（其两个条目都是 DDNS 域名） |
 | `luci-app-upnp`（连带 `etc/config/upnpd`） | 本机不是 NAT 边缘设备，映射对入向流量无效，还会与主路由抢答 SSDP |
 | `luci-app-fullconenat-sonic` / `luci-i18n-fullconenat-sonic-zh-cn` / `kmod-nft-fullcone` | 旁路由不做 NAT，FullCone 没有作用对象；`--keep-config` 升级带过来的旧 `fullcone6='1'` 由 `92-buffy-firewall.sh` 删除 |
 
@@ -57,7 +57,6 @@
 | Secret | 注入位置 |
 |---|---|
 | `PPPOE_USERNAME` / `PPPOE_PASSWORD` | 旁路由不再拨号，`/etc/config/network` 里已无对应占位符；Secret 已降为**可选**，可在仓库里删除 |
-| `DDNS_TOKEN` | `/etc/config/acme`（DuckDNS DNS-01）。DDNS 本身已移除，这个 token 现在只服务于证书签发 |
 | `HP_ADDRESS` / `HP_UUID` | `/etc/config/homeproxy` |
 | `MAIN_AIRPORT_SUB` / `BACKUP_AIRPORT_SUB` | `/etc/openclash/config/MihomoPro.yaml`（机场订阅） |
 | `ROUTER_ROOT_PASSWORD` | `/etc/shadow`（SHA-256 crypt 哈希） |
@@ -70,7 +69,6 @@
 
 - **OpenClash**：核心 / 规则集 / GEO / 大陆白名单 / 面板均在构建期预置，刷机首启即用（首启规则集空缓存死锁已修复）；控制台登录密钥与 SOCKS5/HTTP(S) 认证由 `luci-app-openclash` 首启随机生成（旧版自造值在升级首启自动迁移），快照见 `/etc/openclash-credentials.txt`
 - **DNS**：dnsmasq 备用上游（223.5.5.5 / 119.29.29.29 / 2400:3200::1）+ fake-ip 分流
-- **HTTPS 证书**：Let's Encrypt（DNS-01，DuckDNS API）自动签发/续期，`cert_check.sh` 失败告警；DDNS 已随旁路由改造移除，域名解析需由主路由或别处维护
 - **防火墙**：旁路由转发链路就位（无悬空 `wan` 区域、`lan` forward=ACCEPT、`ip_forward=1`、`rp_filter=0`）、硬件流量卸载
 - **监控告警**：ntfy + Telegram 双通道（见下方脚本）
 
@@ -78,11 +76,10 @@
 
 | 脚本 | 作用 |
 |---|---|
-| `lib-buffy.sh` | 公共函数库（log/notify/resolve/证书检查/代理探测） |
+| `lib-buffy.sh` | 公共函数库（log/notify/resolve/代理探测） |
 | `boot_selfcheck.sh` | 开机自检：确认 OpenClash 核心 + 代理 204 就绪 |
-| `health_check.sh` | 每日体检：WAN/DNS/证书/备用上游/防火墙/流量卸载 |
+| `health_check.sh` | 每日体检：出口连通性/DNS/备用上游/防火墙转发链路/流量卸载 |
 | `proxy_watch.sh` | 每小时代理 204 探测，失败告警（运行中守护） |
-| `cert_check.sh` | 每日证书签发/续期，失败告警 |
 | `first_boot_download.sh` | 首启引导：更新 GEO/白名单/面板，幂等仅执行一次 |
 | `auto_upgrade.sh` | 每日 10:07 检查 GitHub 新 release，自动下载校验并 sysupgrade（见「路由器端自动升级」） |
 

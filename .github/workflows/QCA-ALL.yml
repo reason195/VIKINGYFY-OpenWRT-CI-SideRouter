@@ -130,7 +130,6 @@ jobs:
     secrets:
       MAIN_AIRPORT_SUB: ${{secrets.MAIN_AIRPORT_SUB}}
       BACKUP_AIRPORT_SUB: ${{secrets.BACKUP_AIRPORT_SUB}}
-      DDNS_TOKEN: ${{secrets.DDNS_TOKEN}}
       HP_ADDRESS: ${{secrets.HP_ADDRESS}}
       HP_UUID: ${{secrets.HP_UUID}}
       PPPOE_USERNAME: ${{secrets.PPPOE_USERNAME}}

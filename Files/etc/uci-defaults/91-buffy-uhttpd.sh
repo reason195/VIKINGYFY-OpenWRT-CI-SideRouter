@@ -1,13 +1,10 @@
 #!/bin/sh
-# 自定义项：LuCI 监听。80(HTTP) 使用 uhttpd 软件包默认值，局域网直接 http://192.168.1.2 访问（旁路由本机地址），
-# 不做 HTTP→HTTPS 强制跳转（IP 直访必然证书告警 ERR_CERT_AUTHORITY_INVALID）；
-# 443(HTTPS) 保留，首启用自签证书，90 秒后由 /usr/share/buffy/cert_check.sh 替换为
-# Let's Encrypt 证书——经域名（reason195.duckdns.org）访问时可免告警（域名解析已由 DDNS 移除，需另行维护）。
-# 其余选项全部使用 uhttpd 软件包默认值。
+# 自定义项：关掉 uhttpd 的 HTTP→HTTPS 强制跳转，局域网用 http://192.168.1.2 直接进 LuCI。
+# 必须关：本机不再有任何可信证书（DDNS 与 acme/Let's Encrypt 已随旁路由改造移除），
+# 跳过去只会得到 ERR_CERT_AUTHORITY_INVALID，且没有可免告警的路子。
+# 443 监听不再干预——原先显式 add_list 是为 Let's Encrypt 证书准备的，现在沿用软件包默认值。
+# 其余选项全部使用 uhttpd 软件包默认值，随包更新自动继承。
 exec 2>/dev/null
 uci -q delete uhttpd.main.redirect_https
-uci -q delete uhttpd.main.listen_https
-uci add_list uhttpd.main.listen_https='0.0.0.0:443'
-uci add_list uhttpd.main.listen_https='[::]:443'
 uci commit uhttpd
 exit 0

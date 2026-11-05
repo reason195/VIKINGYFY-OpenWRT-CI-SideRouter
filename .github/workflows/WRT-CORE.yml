@@ -45,8 +45,6 @@ on:
         required: true
       BACKUP_AIRPORT_SUB:
         required: true
-      DDNS_TOKEN:
-        required: true
       HP_ADDRESS:
         required: true
       HP_UUID:
@@ -219,7 +217,6 @@ jobs:
 
           make defconfig -j$(nproc) && make clean -j$(nproc)
         env:
-          DDNS_TOKEN: ${{secrets.DDNS_TOKEN}}
           HP_ADDRESS: ${{secrets.HP_ADDRESS}}
           HP_UUID: ${{secrets.HP_UUID}}
           PPPOE_USERNAME: ${{secrets.PPPOE_USERNAME}}

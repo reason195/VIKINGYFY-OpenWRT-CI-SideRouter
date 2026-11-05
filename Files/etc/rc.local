@@ -45,7 +45,7 @@ printf 'server=223.5.5.5\nserver=119.29.29.29\nserver=2400:3200::1\n' > "$DIR/60
 chmod 644 "$DIR/60-fallback.conf"
 /etc/init.d/dnsmasq restart >/dev/null 2>&1
 
-# custom_fakeip_filter 自愈（防断网修复项）：订阅源/规则源/acme(DuckDNS API) 等域名必须返回真实 IP。
+# custom_fakeip_filter 自愈（防断网修复项）：订阅源/规则源等域名必须返回真实 IP。
 # 若列表文件被误删、uci 标志被改回 0（本机无任何 OpenClash 操作会动它们，此为双保险），
 # 每次启动时恢复。注意：列表烤在 /rom，这里直接从 /rom 恢复，避免内嵌第二份副本。
 uci -q get openclash.config.custom_fakeip_filter | grep -q '^1$' || {
@@ -74,9 +74,6 @@ chmod 644 /etc/openclash/custom/openclash_custom_fake_filter.list 2>/dev/null
 # （START=95）执行，晚于全部 uci-defaults，此处必定读到已生成的值。脚本幂等（内容未变不写），
 # 与 init 脚本重复调用无害。
 /usr/share/buffy/export_credentials.sh >/dev/null 2>&1
-
-# Let's Encrypt 证书后台自愈（首次开机即尝试签发，缺失时由每日 cron 重试）
-( sleep 90; /usr/share/buffy/cert_check.sh >/dev/null 2>&1 ) &
 
 # 首次开机引导：等 OpenClash 启动完成、科学上网可用后，后台自动更新 GEO 数据库 / 大陆白名单 / Zashboard / Metacubexd
 # （脚本自检标记 /etc/.openclash-bootstrap-done，仅首启执行；失败下次开机重试）

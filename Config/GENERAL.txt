@@ -10,9 +10,7 @@ CONFIG_PACKAGE_luci-app-filebrowser=y
 CONFIG_PACKAGE_filebrowser=y
 CONFIG_PACKAGE_luci-app-ttyd=y
 CONFIG_PACKAGE_luci-app-vnstat2=y
-#中文语言包（acme 来自未打补丁的嵌套 feed，构建时不会自动附带，需显式声明；其余应用由 ImmortalWrt 自动附带）
-CONFIG_PACKAGE_luci-app-acme=y
-CONFIG_PACKAGE_luci-i18n-acme-zh-cn=y
+#中文语言包（显式声明；应用本体由 ImmortalWrt 自动附带）
 CONFIG_PACKAGE_luci-i18n-filebrowser-zh-cn=y
 CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y
 CONFIG_PACKAGE_luci-i18n-vnstat2-zh-cn=y
@@ -65,7 +63,6 @@ CONFIG_PACKAGE_automount=y
 CONFIG_PACKAGE_blkid=y
 CONFIG_PACKAGE_cpufreq=y
 CONFIG_PACKAGE_curl=y
-CONFIG_PACKAGE_acme=y
 CONFIG_PACKAGE_dmesg=y
 CONFIG_PACKAGE_exfat-fsck=y
 CONFIG_PACKAGE_exfat-mkfs=y

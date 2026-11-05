@@ -15,8 +15,8 @@
 ## 三、随之失效的下游项
 
 - DDNS 整体**删除**（先按「停用」实现，复查时确认旁路由永远取不到公网地址、留着只会每天失败重试刷日志，故直接移除）：删 `Files/etc/config/ddns`，`Config/GENERAL.txt` 摘掉 `ddns-scripts` / `ddns-scripts-duckdns` / `luci-app-ddns` / `luci-i18n-ddns-zh-cn` 四个包。
-  - **acme 与 `DDNS_TOKEN` 保留**：`validation_method dns` + `dns_duckdns` 只写 `_acme-challenge` 的 TXT 记录，不依赖域名的 A/AAAA，所以证书签发/续期照常成立，用的仍是同一个 token（`Files/etc/config/acme` 里的占位符还在，secret 仍属必需项）。
-  - 因此 `openclash_custom_fake_filter.list` 的 `+.duckdns.org` 必须留着——acme 直连 DuckDNS API，落入 fake-ip 会失败；`rc.local` 的自愈逻辑同理保留，两处注释里「DDNS」改为「acme(DuckDNS API)」。
+  - **acme 与 `DDNS_TOKEN` 曾计划保留**：理由是 DNS-01 只写 `_acme-challenge` 的 TXT 记录、不依赖域名的 A/AAAA，证书签发续期看似能独立成立。后续按「旁路由不需要对外域名服务」推翻，连同证书链一起移除——见第八节。
+  - `openclash_custom_fake_filter.list` 里的 `+.duckdns.org` 当时正是为 acme 直连 DuckDNS API 而保留，第八节随证书一并删除；`rc.local` 与 `93-buffy-openclash.sh` 的注释也先改成了「acme(DuckDNS API)」，第八节再收回。
   - 连带清理：`health_check.sh` 去掉「DDNS 域名可解析」检测（第 2 节只剩 LE 证书）、`verify_flash.py` 去掉 `uci show ddns` 抽查、`crontabs/root` 体检注释、`lib-buffy.sh` 的 `DOMAIN` 语义改为「证书域名」、`91-buffy-uhttpd.sh` 注释。`README.md` 补外部访问的前置条件：本固件不再维护解析，要么主路由/别处把记录指到入口地址再配 IPv4 转发或 IPv6 入站放行。
 - UPnP 整体**删除**：先按「停用」实现（`enabled='0'`），确认它是负资产后连包一起摘——本机不是 NAT 边缘设备，映射对入向流量无效，却仍会在 LAN 上应答 SSDP 跟主路由抢当 IGD（客户端一旦选中本机，PT/下载软件的端口映射静默失效）；且没有 wan 接口时 `ext_ifname` 推导不出出口设备，miniupnpd 本身也可能起不来。删 `Files/etc/config/upnpd`，`Config/GENERAL.txt` 去掉 `luci-app-upnp`。UPnP 请回主路由开。
 - FullCone **删除**：`Config/GENERAL.txt` 摘掉 `luci-app-fullconenat-sonic` / `luci-i18n-fullconenat-sonic-zh-cn` / `kmod-nft-fullcone`，`92-buffy-firewall.sh` 的 `fullcone6` 由「置 1」改为**只删不写**。旁路由不做 NAT，fullcone 没有作用对象；那行 `uci delete` 保留不是多余——`--keep-config` 升级会把旧镜像写下的 `fullcone6='1'` 带过来，而模块已不在，fw4 会去引用不存在的 nft fullcone 表达式。`verify_flash.py` 的 92 检查相应改成断言「`fullcone6` 必须为空」，`Tests/test_side_router_firewall.sh` 新增用例 7 专门锁这条清理逻辑。
@@ -65,8 +65,29 @@
 - 代码侧只有两处硬编码要改：`Files/usr/share/buffy/auto_upgrade.sh` 的 `REPO`、`Scripts/upgrade_firmware.py` 的 `DEFAULT_REPO`。其余引用都走 `GITHUB_REPOSITORY`/相对路径自动适配；`Config/` 文件名与 tag 前缀不变，所以 `/etc/buffy-version`、资产名推导整条链路无需调整。
 - 第五节的 `$WRT_REF` 分支隔离**保留**：新仓库默认分支是 `main`，tag 变成 `…-VIKINGYFY-main-main-<日期>`，设备端前缀推导照常成立；日后在本仓库内再开角色分支时它仍然有效。
 - 分库同时消除上面两个坑：schedule 跑在本仓库默认分支，清理配额也只统计本仓库的 release。
-- 必须手动做的一件事：GitHub API 读不到已有 secret 的**值**，跨仓库无法搬运。新仓库要重配 `ROUTER_ROOT_PASSWORD` / `DDNS_TOKEN` / `HP_ADDRESS` / `HP_UUID` / `MAIN_AIRPORT_SUB` / `BACKUP_AIRPORT_SUB`（缺任一即终止构建）；`TELEGRAM_*`、`SINGBOX_SS_PASSWORD`、`PPPOE_*` 可选。
+- 必须手动做的一件事：GitHub API 读不到已有 secret 的**值**，跨仓库无法搬运。新仓库要重配 `ROUTER_ROOT_PASSWORD` / `DDNS_TOKEN` / `HP_ADDRESS` / `HP_UUID` / `MAIN_AIRPORT_SUB` / `BACKUP_AIRPORT_SUB`（缺任一即终止构建）；`TELEGRAM_*`、`SINGBOX_SS_PASSWORD`、`PPPOE_*` 可选。（写这条时 DDNS 还在；第八节把 `DDNS_TOKEN` 也删了，**配新仓库请以下面的最终清单为准**。）
 - 长期代价：`Files/` 的公共 bugfix（OpenClash 认证迁移、凭据快照、fw4 悬空引用这类）现在得在两个仓库各自同步——这是用隔离换来的，没有额外成本可省。
+
+
+## 八、证书链一并移除（DDNS 走后的第二步）
+
+**诉求**：DDNS 包既然已经没了，域名不再指向本机，Let's Encrypt 证书也就失去服务对象，一起删。
+
+- 删文件：`Files/etc/config/acme`、`Files/usr/lib/acme/client/dnsapi/dns_duckdns.sh`（vendored 的 acme.sh DuckDNS 插件，`Files/usr/lib/` 随之清空）、`Files/usr/share/buffy/cert_check.sh`、`Files/etc/openclash/custom/openclash_custom_domain_dns.list`（那两个条目 `reason195.duckdns.org` / `reason195.de5.net` 都是 DDNS 域名，功能整体失效）。
+- `Config/GENERAL.txt`：摘掉 `acme` / `luci-app-acme` / `luci-i18n-acme-zh-cn`。原「中文语言包需显式声明」的注释是给嵌套 feed 里的 ddns/acme 写的，两者都走后改成通用表述。
+- `Files/etc/crontabs/root`：删三行——`acme renew`(00:00)、`uhttpd restart`(00:05)、`cert_check.sh`(00:20)。那条 `uhttpd restart` 只是为续期后换证书而存在，没有证书就不留。
+- `Files/etc/rc.local`：删首启后台的 `cert_check.sh` 调用。
+- `Files/usr/share/buffy/lib-buffy.sh`：`DOMAIN`、`LEAF`、`cert_expires_within()` 一并删除——cert_check.sh 与体检第 2 节移除后它们再无任何使用者（已 grep 确认）。
+- `Files/usr/share/buffy/health_check.sh`：删「Let's Encrypt 证书」整节并重编号（原 3/4/5 → 2/3/4），文件头的检查清单同步。
+- `Files/etc/uci-defaults/91-buffy-uhttpd.sh`：只保留「删 `redirect_https`」，去掉为 LE 证书显式 `add_list listen_https` 的两行，443 回归软件包默认。**跳转仍必须关**：本机没有可信证书，跳过去就是 `ERR_CERT_AUTHORITY_INVALID` 且没有免告警路径。
+- `Files/etc/uci-defaults/93-buffy-openclash.sh`：删 `enable_custom_domain_dns_server` / `custom_domain_dns_server`；`openclash_custom_fake_filter.list` 删 `+.duckdns.org`。
+- `Scripts/Settings.sh`：删 `inject_secret "DDNS_TOKEN"`，以及执行位兜底里已不存在的 `./files/usr/lib/acme/client/dnsapi/*.sh` 路径。
+- `.github/workflows/QCA-ALL.yml` / `WRT-CORE.yml`：删 `DDNS_TOKEN` 的 secrets 声明与 env 传递。
+- `Scripts/verify_flash.py`：`expected` 字典去掉两个 domain_dns 键；91-buffy-uhttpd 的断言由「`redirect_https` 缺失 **且** 443 必须在 `listen_https` 里」改成只断言前者——443 现在取决于软件包默认，本仓库不该替它担保；`RUNTIME_CHECKS` 的 OpenClash grep 同步去掉两个键。
+
+**正向副作用**：新仓库的必需 Secrets 从 6 个降到 **5 个**（`ROUTER_ROOT_PASSWORD`、`HP_ADDRESS`、`HP_UUID`、`MAIN_AIRPORT_SUB`、`BACKUP_AIRPORT_SUB`），`DDNS_TOKEN` 彻底不用配了。
+
+**测试**：本轮触及文件的 4 个 shell 套件 **93 passed / 0 failed**（credentials 18 + export 18 + openclash 迁移 25 + side-router 防火墙 32）；`test_auto_upgrade.sh`（41）与 `test_upgrade_firmware.py`（35）对应的文件本轮未改，维持上次结果。`sh -n`/`bash -n`/`py_compile` 全通过。
 
 
 
