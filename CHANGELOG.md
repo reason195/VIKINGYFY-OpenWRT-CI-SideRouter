@@ -151,6 +151,16 @@
 
 
 
+## 四、dnsmasq 缓存
+
+- `Files/etc/config/dhcp`：`option cachesize '0' → '1000'`。`0` 在 OpenWrt 的 dnsmasq init 里等于「不写 `cache-size`」，实际回落到编译默认 150；改 1000 后局域网重复解析走本地缓存，减少对 clash DNS（7874）的重复查询。实机验证：运行时 `/var/etc/dnsmasq.conf.*` 出现 `cache-size=1000`，DNS 正常。
+
+## 五、DNS listen 收口 + 停用空转服务
+
+- `Files/etc/openclash/custom/openclash_custom_overwrite.sh`：新增 `dns.listen = 127.0.0.1:7874`。dnsmasq 是 `server=127.0.0.1#7874`，LAN 侧没有任何东西需要直连 7874；原来绑 `0.0.0.0` 让同网段设备能绕过 dnsmasq 直查 clash DNS。**坑**：`ruby_edit` 的值是按 Ruby 代码原样拼接（`Value[path] = 值`），含冒号的值必须自带引号（`"\"127.0.0.1:7874\""`），否则整条编辑失败且静默。
+- 新增 `Files/etc/uci-defaults/95-buffy-idle-services.sh`：停用 `wpad`（本机无 WiFi 硬件）、`relayd`、`radius`、`odhcpd`（IPv6 全关）四个空转服务。
+- 实机验证（2026-11-06）：`netstat` 显示 `127.0.0.1:7874`；LAN 侧连 7874 被拒（ConnectionRefused），53 正常；`nslookup` 正常；`/etc/rc.d` 无残留、进程已退出。
+
 # 变更记录（2026-11-05）：刷机默认不保留配置（sysupgrade -n）
 
 **诉求**：下次刷机不保留配置。此前两条刷机路径（PC 端 `upgrade_firmware.py`、路由器端 cron `auto_upgrade.sh`）默认都是「保留配置」，而保留路径有个已知死结：`/etc/rc.local` 在 `/lib/upgrade/keep.d/base-files-essential` 的永久保留清单里，保留升级会让它停在旧固件版本、新版的开机钩子永远进不了运行层（2026-09-29 实证）。改成默认不保留，镜像里的 `/etc` 才真正生效。
