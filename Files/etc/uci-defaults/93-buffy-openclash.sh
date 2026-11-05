@@ -32,6 +32,36 @@ uci -q delete openclash.config.custom_fakeip_filter
 uci set openclash.config.custom_fakeip_filter='1'
 uci -q delete openclash.config.skip_proxy_address
 uci set openclash.config.skip_proxy_address='1'
+# DNS 防泄漏（2026-11-06）：订阅自带的 DNS 段通常是国内 DoH（alidns/doh.pub），
+# 且 enable_custom_dns=0 时插件不覆写 → 国外域名由国内解析器解析，权威侧看到国内 ISP
+# 解析器（DNS 泄漏），而流量却从境外节点出去。
+# 方案：enable_custom_dns=1 由 @dns_servers 生成 nameserver（境外 DoH，respect-rules=1
+# 下 DoH 连接经代理出口）；custom_name_policy=1 合并 openclash_custom_domain_dns_policy.list，
+# 让国内/私有/苹果域名仍走国内 DoH 直连（保 CDN 就近解析）。
+uci -q delete openclash.config.enable_custom_dns
+uci set openclash.config.enable_custom_dns='1'
+uci -q delete openclash.config.custom_name_policy
+uci set openclash.config.custom_name_policy='1'
+# 重建 @dns_servers：default=国内 bootstrap（用于解析 DoH 主机名）；nameserver=境外 DoH
+# 有界循环：删一段后其余段前移，故始终删 [0]；上限防 uci 异常时空转
+_i=0
+while [ "$_i" -lt 64 ] && uci -q delete "openclash.@dns_servers[0]"; do
+	_i=$((_i + 1))
+done
+unset _i
+_buffy_add_dns() {
+	_s="$(uci add openclash dns_servers)" || return 0
+	uci set "openclash.$_s.enabled='1'"
+	uci set "openclash.$_s.type='$1'"
+	uci set "openclash.$_s.ip='$2'"
+	uci set "openclash.$_s.group='$3'"
+}
+_buffy_add_dns udp 119.29.29.29 default
+_buffy_add_dns udp 223.5.5.5 default
+_buffy_add_dns https dns.cloudflare.com/dns-query nameserver
+_buffy_add_dns https dns.google/dns-query nameserver
+unset -f _buffy_add_dns
+unset _s
 uci -q delete openclash.config.enable_meta_sniffer
 uci set openclash.config.enable_meta_sniffer='1'
 uci -q delete openclash.config.enable_meta_sniffer_pure_ip

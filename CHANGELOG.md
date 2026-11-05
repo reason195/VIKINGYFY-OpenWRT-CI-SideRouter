@@ -1,4 +1,26 @@
-# 变更记录（2026-11-05）：主路由形态改旁路由（不拨号、不发 DHCP，只做代理网关）
+# 变更记录（2026-11-06）：DNS 防泄漏 + 抗 TLS 指纹 + DNS 缓存
+
+**背景**：实机 ipleak 检测发现 DNS 泄漏——出口在境外（AWS 美西），但域名解析由国内 ISP（中国移动 `111.12.63.x`）完成，权威侧因此能看到真实的国内解析位置；流量走了代理、DNS 却没进隧道。根因是订阅自带的 DNS 段为国内 DoH（alidns/doh.pub），且 `enable_custom_dns=0` 时插件不覆写。
+
+## 一、DNS 防泄漏（`Files/etc/uci-defaults/93-buffy-openclash.sh`）
+
+- 新增 `enable_custom_dns=1`：由 `@dns_servers` 生成 `nameserver`，国外域名走经代理的境外 DoH（`dns.cloudflare.com` / `dns.google`）。`enable_respect_rules=1` 下这些 DoH 连接本身也经代理出口，权威侧看到的是境外解析器。
+- 新增 `custom_name_policy=1` + `Files/etc/openclash/custom/openclash_custom_domain_dns_policy.list`：`geosite:cn,private,apple` 仍走国内 DoH（`doh.pub` / `alidns`）直连，保留国内 CDN 就近解析。
+- 重建 `@dns_servers`：`default` 组保留国内 IP（仅用于 bootstrap 解析 DoH 主机名），`nameserver` 组为境外 DoH。
+
+## 二、覆盖钩子（新增 `Files/etc/openclash/custom/openclash_custom_overwrite.sh`）
+
+- OpenClash 无对应 UCI 项的两项，用官方覆盖钩子（`/etc/init.d/openclash` 每次生成配置后调用，订阅刷新后依然生效）写入：
+  - `global-client-fingerprint: chrome` —— 抗 TLS 指纹识别（降低流媒体/风控触发验证码）
+  - `dns.cache-size: 4096` —— DNS 缓存（`cachesize_dns` 只是布尔开关，非缓存条数）
+- 通过 `ruby.sh` 的 `ruby_edit` 记录编辑，由 `YAML.overwrite_run_custom` 做锚点安全修改，不会破坏 `proxies: *N` 引用。
+
+## 三、验证与断言
+
+- `Scripts/verify_flash.py`：`93-buffy-openclash.sh` 的期望值加入 `enable_custom_dns=1`、`custom_name_policy=1`。
+- 实机验证（2026-11-06）：ipleak DNS 解析器全部为 Amazon（US），`China Mobile` 消失；`whoami` TXT 由 `111.12.63.x`（移动）变为 Cloudflare；国内域名仍解析为真实 IP；fake-ip 正常；出口仍为 AWS 美西。删除 `cache-size`/`global-client-fingerprint` 两行后重启，钩子自动补回（幂等）。
+
+
 
 **诉求**：新分支 `feat/side-router-optimization` 把固件从主路由改成旁路由，仍由 OpenClash 接管代理。本机 `192.168.1.2`、主路由 `192.168.1.1`；`.2` 原先静态绑给 `WR3600H-4597`，该设备已停用，绑定随之删除。客户端接管方式选定为「本机停用 DHCP，需要走代理的设备手动把网关+DNS 指到 192.168.1.2」。
 
