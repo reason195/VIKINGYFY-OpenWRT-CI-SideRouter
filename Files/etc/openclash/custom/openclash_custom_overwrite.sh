@@ -15,5 +15,8 @@ CONFIG_FILE="$1"
 
 ruby_edit "$CONFIG_FILE" "['global-client-fingerprint']" "chrome"
 ruby_edit "$CONFIG_FILE" "['dns']['cache-size']" "4096"
+# DNS 收口：dnsmasq 用 127.0.0.1#7874 转发，LAN 侧无需直连 7874 → 只绑本机
+# 注意：ruby_edit 的值是按 Ruby 代码原样拼接（Value[path] = 值），含冒号等非字面量必须自带引号
+ruby_edit "$CONFIG_FILE" "['dns']['listen']" "\"127.0.0.1:7874\""
 
 exit 0
