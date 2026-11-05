@@ -151,6 +151,10 @@
 
 
 
+## 四、dnsmasq 缓存
+
+- `Files/etc/config/dhcp`：`option cachesize '0' → '1000'`。`0` 在 OpenWrt 的 dnsmasq init 里等于「不写 `cache-size`」，实际回落到编译默认 150；改 1000 后局域网重复解析走本地缓存，减少对 clash DNS（7874）的重复查询。实机验证：运行时 `/var/etc/dnsmasq.conf.*` 出现 `cache-size=1000`，DNS 正常。
+
 # 变更记录（2026-11-05）：刷机默认不保留配置（sysupgrade -n）
 
 **诉求**：下次刷机不保留配置。此前两条刷机路径（PC 端 `upgrade_firmware.py`、路由器端 cron `auto_upgrade.sh`）默认都是「保留配置」，而保留路径有个已知死结：`/etc/rc.local` 在 `/lib/upgrade/keep.d/base-files-essential` 的永久保留清单里，保留升级会让它停在旧固件版本、新版的开机钩子永远进不了运行层（2026-09-29 实证）。改成默认不保留，镜像里的 `/etc` 才真正生效。
