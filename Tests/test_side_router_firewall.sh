@@ -16,7 +16,7 @@
 #   4 已干净的状态 → 不误删任何段，选项照常写入
 #   5 幂等：连续执行两次结果一致
 #   6 10 条 src='wan' 规则（多于早期实现的 8 轮上限）全部清除
-#   7 旧版残留的 fullcone6 → 删除（kmod-nft-fullcone 已移出固件，--keep-config 升级会把旧值带过来）
+#   7 fullcone6（旧镜像 --keep-config 带过来）与 fullcone（ImmortalWrt 出厂自带）→ 都删除
 #
 # 用法：sh Tests/test_side_router_firewall.sh
 # 退出码：0 = 全部通过；1 = 有失败
@@ -260,17 +260,20 @@ check_eq "无 wan 引用残留" "0" "$(wan_refs)"
 check_eq "10 条 wan 规则清空、仅剩 lan 规则" "1" "$(count_pref 'firewall.@rule\[.*\].name=')"
 check_eq "lan 规则内容完整" "Keep-Me" "$(val 'firewall.@rule[0].name')"
 
-# ---- 用例 7：旧版残留 fullcone6 被清除（kmod-nft-fullcone 已移出固件） ----
-echo "[7] 残留 fullcone6 清除"
+# ---- 用例 7：fullcone / fullcone6 两个残留键都被清除（扩展已移出固件） ----
+echo "[7] fullcone 残留清除"
 cat > "$UCI_STATE" <<'EOF'
 firewall.@defaults[0].input=ACCEPT
 firewall.@defaults[0].fullcone6=1
+firewall.@defaults[0].fullcone=1
 firewall.@zone[0].name=lan
 firewall.@zone[0].network=lan
 firewall.@zone[0].forward=ACCEPT
 EOF
 run_target
 check_eq "fullcone6 已删除" "" "$(val 'firewall.@defaults[0].fullcone6')"
+# fullcone 不是我们写的，是 ImmortalWrt 出厂 /etc/config/firewall 的 @defaults 自带的
+check_eq "fullcone 已删除" "" "$(val 'firewall.@defaults[0].fullcone')"
 check_eq "无关默认项保留" "ACCEPT" "$(val 'firewall.@defaults[0].input')"
 check_eq "卸载开关仍写入" "1" "$(val 'firewall.@defaults[0].flow_offloading')"
 check_eq "lan 区域未受影响" "lan" "$(val 'firewall.@zone[0].name')"

@@ -239,22 +239,24 @@ def check_uci_defaults():
                     f"redirect_https={rh!r}(应为None，即无强制跳转) "
                     f"listen_https={lh!r}(沿用软件包默认，仅记录)"))
 
-    # 92-buffy-firewall.sh：硬件流卸载 + 清除引用已删除接口的 wan 区域/规则 + 清掉残留 fullcone6
+    # 92-buffy-firewall.sh：硬件流卸载 + 清除引用已删除接口的 wan 区域/规则 + 清掉 fullcone 残留
     d = uci_dump("firewall")
     fo = d.get("firewall.@defaults[0].flow_offloading")
     foh = d.get("firewall.@defaults[0].flow_offloading_hw")
     fc6 = d.get("firewall.@defaults[0].fullcone6")
+    fc = d.get("firewall.@defaults[0].fullcone")
     lan_sec = find_named_section(d, "firewall.@zone", "lan")
     lan_fwd = d.get(f"{lan_sec}.forward") if lan_sec else None
     # 旁路由没有 wan/wan6 接口：残留的 wan 区域或 src='wan' 规则会让 fw4 引用不存在的接口，
     # 整张表加载失败 → 客户端全断，所以「已清除」本身就是必须成立的断言。
-    # fullcone6 同理：kmod-nft-fullcone 已移出固件，保留配置升级带过来的旧值必须被删掉。
+    # fullcone/fullcone6 同理：fullconenat-sonic 扩展已移出固件（fullcone6 是旧镜像写的，
+    # fullcone 是 ImmortalWrt 出厂 @defaults 自带的），留着就是指向不存在表达式的开关。
     wan_left = find_named_section(d, "firewall.@zone", "wan")
     wan_rules = [k for k in d if k.endswith(".src") and d[k] == "wan"]
-    ok = (fo == "1" and foh == "1" and fc6 is None
+    ok = (fo == "1" and foh == "1" and fc6 is None and fc is None
           and lan_fwd == "ACCEPT" and wan_left is None and not wan_rules)
     results.append(("92-buffy-firewall.sh", ok,
-                    f"flow_offloading={fo} hw={foh} fullcone6={fc6 or '已清除'} "
+                    f"flow_offloading={fo} hw={foh} fullcone={fc or '已清除'} fullcone6={fc6 or '已清除'} "
                     f"lan.forward={lan_fwd} "
                     f"wan区域残留={'有' if wan_left else '无'} wan规则残留={len(wan_rules)}"))
 

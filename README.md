@@ -28,7 +28,7 @@
 | DDNS + 证书 | **整体移除**：`/etc/config/ddns`、`/etc/config/acme`、`Files/usr/lib/acme/`（vendored dns_duckdns 插件）、`cert_check.sh` 与相关包全删。旁路由不是边缘设备，既取不到公网地址，也没有对外服务的域名 |
 | 防火墙 | 清除引用已删除接口的 `wan` 区域与 `Allow-WAN-*-v6` 规则（残留会让 fw4 整表加载失败）；保留硬件流卸载；`rp_filter=0` 放行同口非对称转发。FullCone 已随 NAT 角色一起移除 |
 
-外部访问：本固件不再有 DDNS 与 Let's Encrypt 证书链，管理入口就是 `http://192.168.1.2`（`redirect_https` 已强制关闭——没有可信证书时跳转只会 `ERR_CERT_AUTHORITY_INVALID`）。若仍要从外网进管理页，得自己补齐三件事：① 由主路由或别处把域名解析到你的入口地址；② 在主路由做端口转发到 `192.168.1.2`（80 明文，或 443——443 是 uhttpd 软件包默认的自签证书，浏览器必然告警）；③ 想要可信证书需另找方案（反向代理或内网穿透自带 TLS）。
+外部访问：本固件不再有 DDNS 与 Let's Encrypt 证书链，管理入口就是 `http://192.168.1.2`（`redirect_https` 已强制关闭——没有可信证书时跳转只会 `ERR_CERT_AUTHORITY_INVALID`）。若仍要从外网进管理页，得自己补齐三件事：① 由主路由或别处把域名解析到你的入口地址；② 在主路由做端口转发到 `192.168.1.2:80`——**只有 80 可用**，26.11.06 实机测过 `uhttpd.main` 仅有 `listen_http='0.0.0.0:80' '[::]:80'`，443 并没有监听（`listen_https` 沿用软件包默认即为空；`/etc/uhttpd.crt` 虽在但没被使用），要 443 得自己 `uci add_list uhttpd.main.listen_https=...` 并承担自签告警；③ 想要可信证书需另找方案（反向代理或内网穿透自带 TLS）。
 
 ### 旁路由下已移除的软件包
 

@@ -4,7 +4,7 @@
 0 3 * * 1 /usr/share/openclash/openclash_geo.sh geoasn #openclash-cron-task
 0 4 * * 1 /usr/share/openclash/openclash_chnroute.sh #openclash-cron-task
 
-#路由器全面体检（出口连通性/DNS/LE证书/dnsmasq备用上游/防火墙转发链路/流量卸载），异常时 ntfy/Telegram 告警
+#路由器全面体检（出口连通性/DNS/dnsmasq备用上游/防火墙转发链路/流量卸载），异常时 ntfy/Telegram 告警
 30 6 * * * /usr/share/buffy/health_check.sh
 
 #运行中周期性代理健康检查（每小时 204 探测，失败推 ntfy/Telegram 告警）

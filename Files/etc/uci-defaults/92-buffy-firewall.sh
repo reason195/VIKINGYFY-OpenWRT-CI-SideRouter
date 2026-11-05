@@ -14,10 +14,15 @@ uci -q delete firewall.@defaults[0].flow_offloading
 uci set firewall.@defaults[0].flow_offloading='1'
 uci -q delete firewall.@defaults[0].flow_offloading_hw
 uci set firewall.@defaults[0].flow_offloading_hw='1'
-# fullcone6 只删不写：旁路由不做 NAT，fullcone 没有作用对象，kmod-nft-fullcone 也已移出固件。
-# 但 --keep-config 升级会带上旧镜像写入的 fullcone6='1'，留着会让 fw4 去引用已不存在的
-# nft fullcone 表达式，所以这一行是针对「保留配置」路径的清理，不是多余动作。
+# fullcone / fullcone6 只删不写：旁路由不做 NAT，fullcone 没有作用对象，nft fullcone 扩展
+# （fullconenat-sonic）也已移出固件。两个键都要清：
+#   - fullcone6：旧版镜像写入过，--keep-config 升级会带过来；
+#   - fullcone：ImmortalWrt 出厂 /etc/config/firewall 的 @defaults 里就写着 '1'（wan 区域里
+#     那一个随下方 wan 区域一起删除），不是我们写的，但既然固件里已无 fullcone 扩展，留着
+#     只是一个指向不存在表达式的开关。
+# 26.11.06 实机：清掉扩展后 fw4 表内 fullcone 引用为 0，本项属确定性清理而非救火。
 uci -q delete firewall.@defaults[0].fullcone6
+uci -q delete firewall.@defaults[0].fullcone
 
 # --- 清除 wan 区域与引用 wan 的放行规则 ---
 # /etc/config/network 里已无 wan/wan6（旁路由不拨号），但防火墙包默认生成的 wan 区域仍写着

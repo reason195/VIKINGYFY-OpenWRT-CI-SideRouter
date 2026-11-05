@@ -100,6 +100,32 @@
 - **踩到一条真问题**：发布出来的 `Config-*.txt` 里 `CONFIG_PACKAGE_luci-app-fullconenat-sonic=y`、`luci-i18n-fullconenat-sonic-zh-cn=y`、`fullconenat-sonic=y` 三个全在——上一节「FullCone 已移除」只做了一半。原因不在本仓库：`GENERAL.txt` 与设备配置里确实一行都没写了，是上游 `package/emortal/luci-app-fullconenat-sonic/Makefile` 写了 `LUCI_DEFAULT:=y if PACKAGE_luci-app-firewall && (PACKAGE_firewall4 || PACKAGE_firewall)`，固件必然带 luci，`make defconfig` 就必然把它选回来。
 - **修法**：`Config/GENERAL.txt` 的「删除插件」段显式置 `=n` 三行。这个路子在本仓库有现成先例——`luci-app-attendedsysupgrade`、`luci-app-wol` 同样是 default-y，用 `=n` 后 release 的 Config 里确实是 `is not set`。
 - 顺带核对：ddns / acme / upnp 三条在发布 Config 里均已 `is not set`，那几个包不是 default-y，删掉 `=y` 就够了，无需补 `=n`；`kmod-nft-fullcone` 这一符号在本次发布配置里根本没出现（`fullconenat-sonic` 自带 nft 扩展），`92-buffy-firewall.sh` 只删 `fullcone6` 的兜底逻辑不受影响。
+- **重建实测（run 42079298920，`completed success`，发布 `…-main-main-26.11.06-01.58.53`）**：新 Config 资产里变成 `# CONFIG_PACKAGE_luci-app-fullconenat-sonic is not set` 与 `# CONFIG_PACKAGE_fullconenat-sonic is not set`，`.manifest` 里 fullcone 关键字 0 命中，release 正文的插件列表也不再有 `luci-app-fullconenat-sonic`——`=n` 这种输入写法确实被 `make defconfig` 接受（它自己会改写成标准的 `is not set` 形式落盘），不需要换成 `# … is not set` 手写。`luci-i18n-fullconenat-sonic-zh-cn` 因父包未选中而整个符号不再出现。镜像体积仍是 98.5MB（该包只有几 KB 的 lua/js，看不出来）。
+- 这一轮重建只花了约 39 分钟（首次 1h40m）：上游源码哈希未变，`Check Caches` 的 key `IPQ60XX-WIFI-NO-VIKINGYFY-<hash>` 直接命中上一轮写入的 `staging_dir` + ccache，工具链整段跳过。
+
+
+## 十、实机验证（192.168.1.2 已刷入 26.11.06 构建）与三处修正
+
+**做法**：`python Scripts/verify_flash.py --host 192.168.1.2` 跑完整一致性校验（退出码 0），再用只读 SSH 会话逐项体检旁路由设置与代理链路。设备当时 uptime 5 分钟，`/etc/buffy-version` = `IPQ60XX-WIFI-NO-VIKINGYFY-main-main-26.11.06-01.58.53`，即刚发布的那版。
+
+**通过项**（节选，全部为实机读数）：
+
+- `Files/` 覆盖层 26 个文件与 `/rom` 逐字节一致（`etc/shadow` 走「本地 12 行全在、镜像多 5 行包用户」的合并比对）；5 个 uci-defaults 已消费，改由运行时状态断言，全绿。
+- 网络形态：`lan` static `192.168.1.2/24` + `gateway 192.168.1.1`，`network.wan`/`wan6` 不存在，`ifstatus lan` 为 up。
+- DHCP/RA 四键全 `disabled`、`authoritative=0`，dnsmasq 仍在 `192.168.1.2:53` 服务——「关 DHCP 不关 DNS」这条最难平衡的路径成立。
+- `ip_forward=1`、`rp_filter=0`（all 与 default 都是）、`ipv6.conf.all.forwarding=1`。
+- fw4 表加载成功，`nft list table inet fw4` 里 `fullcone` 0 处、`iifname … wan` 0 处；只剩 lan 区域且 `forward=ACCEPT`；`flow_offloading`/`flow_offloading_hw` 均为 1。
+- 包侧：`opkg list-installed` 已无 acme/ddns/upnp/fullcone 任何一条，`/etc/config` 与 `/rom/etc/config` 里也没有 `acme`/`ddns`/`upnpd`；crontab 无证书三行。
+- OpenClash：核心在跑（7874/7890/7891/7893/9090 全监听），`rule_provider` 40 个、`proxy_provider` 2 个，GEO 四件 + `china_ip_route.ipset` 首启即就位；`enable_custom_domain_dns_server` 回落到包默认 0；控制器 `9090` 返回 `Unauthorized`（认证生效，符合预期）。
+- 链路实测：`www.youtube.com` → `198.18.0.31`（fake-ip 生效）；`-x 127.0.0.1:7890` 取 gstatic 204 = `204`；本机走透明代理 = `204`；`baidu` = `200`（直连分流正常）。`boot_selfcheck: PASS`。
+
+**修正一：`firewall.@defaults[0].fullcone` 仍在。** 上一轮只清了 `fullcone6`。实机 `uci show firewall.@defaults[0]` 显示 `fullcone='1'`，来源是 ImmortalWrt 出厂 `/etc/config/firewall`（`/rom/etc/config/firewall` 第 10 行 @defaults、第 27 行 wan 区域各一处；后者随 wan 区域一起被删）。目前无害——`fullconenat-sonic` 扩展已移出镜像，fw4 表里 fullcone 引用为 0——但它是一个指向不存在表达式的开关，`92-buffy-firewall.sh` 现在两个键一起删。测试用例 7 加断言（32 → 33 项）。
+
+**修正二：`/etc/crontabs/root` 的体检注释仍写着「LE证书」。** 证书节第八节就删了，注释漏改；`verify_flash.py` 恰好把 crontab 的运行时原文打出来才暴露。已去掉这一项。
+
+**修正三：README 关于 443 的说法不成立。** 原写「443 是 uhttpd 软件包默认的自签证书」，实机 `uhttpd.main` 只有 `listen_http='0.0.0.0:80' '[::]:80'`，`netstat` 里 443 根本没监听（`cert='/etc/uhttpd.crt'` 存在但未被使用）。改成：外网访问只能转 80，要 443 得自己 `add_list uhttpd.main.listen_https` 并承担自签告警。
+
+**未决**：这台设备是在 02:50 引导进新固件的，比 release 发布（02:33:58）晚 17 分钟；`auto_upgrade.sh` 的 cron 是 `7 10 * * *`，对不上，`logread` 只有本次开机的记录（首次出现的 dropbear 登录就是本次验证的连接），所以判定是人工刷入。若并非人工操作，需要回头查自动升级链路。
 
 
 
