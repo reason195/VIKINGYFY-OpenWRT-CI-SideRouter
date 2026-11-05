@@ -37,7 +37,7 @@
 | `ddns-scripts` / `ddns-scripts-duckdns` / `luci-app-ddns` / `luci-i18n-ddns-zh-cn` | 旁路由没有公网接口可取地址，DDNS 永远失败 |
 | `acme` / `luci-app-acme` / `luci-i18n-acme-zh-cn` + `Files/usr/lib/acme/` | Let's Encrypt 证书服务于「域名 + 外网访问」，DDNS 移除后域名不再指向本机，证书失去用途；连带删掉 `cert_check.sh`、cron 里的三行证书任务、`lib-buffy.sh` 的 `DOMAIN`/`LEAF`/`cert_expires_within`，以及 OpenClash 的「第二 DNS 服务器」域名列表（其两个条目都是 DDNS 域名） |
 | `luci-app-upnp`（连带 `etc/config/upnpd`） | 本机不是 NAT 边缘设备，映射对入向流量无效，还会与主路由抢答 SSDP |
-| `luci-app-fullconenat-sonic` / `luci-i18n-fullconenat-sonic-zh-cn` / `kmod-nft-fullcone` | 旁路由不做 NAT，FullCone 没有作用对象；`--keep-config` 升级带过来的旧 `fullcone6='1'` 由 `92-buffy-firewall.sh` 删除 |
+| `luci-app-fullconenat-sonic` / `luci-i18n-fullconenat-sonic-zh-cn` / `fullconenat-sonic` | 旁路由不做 NAT，FullCone 没有作用对象；`--keep-config` 升级带过来的旧 `fullcone6='1'` 由 `92-buffy-firewall.sh` 删除。**注意**：上游该包写了 `LUCI_DEFAULT:=y if PACKAGE_luci-app-firewall`，只要镜像里有 LuCI 就会被 `make defconfig` 自动选中，光从 `GENERAL.txt` 删掉 `=y` 行删不掉——必须显式 `=n`（26.11.05 首次构建实测到） |
 
 `luci-app-homeproxy` / `luci-app-nikki` / `sing-box` 与 filebrowser、diskmanager、partexp、ksmbd、ttyd、vnstat2 等属个人功能，不随本次改造移除。装多套代理栈时注意不要同时开启，它们会互相抢转发和 DNS。
 

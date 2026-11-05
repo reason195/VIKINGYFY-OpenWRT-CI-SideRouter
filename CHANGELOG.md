@@ -89,6 +89,18 @@
 
 **测试**：本轮触及文件的 4 个 shell 套件 **93 passed / 0 failed**（credentials 18 + export 18 + openclash 迁移 25 + side-router 防火墙 32）；`test_auto_upgrade.sh`（41）与 `test_upgrade_firmware.py`（35）对应的文件本轮未改，维持上次结果。`sh -n`/`bash -n`/`py_compile` 全通过。
 
+**全套复跑**：169 项断言全绿（18 + 18 + 25 + 32 + 41 + 35）。
+
+
+## 九、新仓库首次构建实测：FullCone 其实没被删掉
+
+**动作**：5 个必需 Secrets 配好 → `54f76ad` 推上 `main` → 手动触发 QCA-ALL（run 42054580521），`completed success`，发布 `IPQ60XX-WIFI-NO-VIKINGYFY-main-main-26.11.05-23.27.38`。
+
+- **release 命名链路验证通过**：拿真实 tag 复现 `auto_upgrade.sh` 第 92–123 行，前缀推导得 `IPQ60XX-WIFI-NO-VIKINGYFY-main-main-`、`SUFFIX` 剩 `26.11.05-23.27.38`、拼出的资产名与 release 里真实存在的 `qualcommax-ipq60xx-jdcloud_re-cs-07-squashfs-sysupgrade-26.11.05-23.27.38.bin` 逐字一致，`grep "^$TAG_PREFIX"` 也命中；`-main-main-` 这种重复段不影响剥日期。Python 侧 `running_prefix()` 同结果。
+- **踩到一条真问题**：发布出来的 `Config-*.txt` 里 `CONFIG_PACKAGE_luci-app-fullconenat-sonic=y`、`luci-i18n-fullconenat-sonic-zh-cn=y`、`fullconenat-sonic=y` 三个全在——上一节「FullCone 已移除」只做了一半。原因不在本仓库：`GENERAL.txt` 与设备配置里确实一行都没写了，是上游 `package/emortal/luci-app-fullconenat-sonic/Makefile` 写了 `LUCI_DEFAULT:=y if PACKAGE_luci-app-firewall && (PACKAGE_firewall4 || PACKAGE_firewall)`，固件必然带 luci，`make defconfig` 就必然把它选回来。
+- **修法**：`Config/GENERAL.txt` 的「删除插件」段显式置 `=n` 三行。这个路子在本仓库有现成先例——`luci-app-attendedsysupgrade`、`luci-app-wol` 同样是 default-y，用 `=n` 后 release 的 Config 里确实是 `is not set`。
+- 顺带核对：ddns / acme / upnp 三条在发布 Config 里均已 `is not set`，那几个包不是 default-y，删掉 `=y` 就够了，无需补 `=n`；`kmod-nft-fullcone` 这一符号在本次发布配置里根本没出现（`fullconenat-sonic` 自带 nft 扩展），`92-buffy-firewall.sh` 只删 `fullcone6` 的兜底逻辑不受影响。
+
 
 
 # 变更记录（2026-11-05）：刷机默认不保留配置（sysupgrade -n）
