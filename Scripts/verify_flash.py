@@ -21,11 +21,12 @@
 #   2. 运行时漂移：/etc 与 /rom 的差异仅作提示（openclash/apk 会改写运行时文件，属正常）。
 #   3. 关键运行时状态：OpenClash 核心/规则集/DNS/防火墙等抽查。
 #
-# 退出码：0 = 固件一致性全部通过；1 = 存在不一致（运行时漂移不计入）。
+# 退出码：0 = 覆盖层、首启效果及 Clash 运行配置全部通过；1 = 不一致（一般运行时漂移不计入）。
 
 import argparse
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -45,6 +46,7 @@ SKIP_ON_ROUTER = {
     "etc/uci-defaults/92-buffy-firewall.sh",
     "etc/uci-defaults/93-buffy-openclash.sh",
     "etc/uci-defaults/94-buffy-credentials.sh",
+    "etc/uci-defaults/95-buffy-idle-services.sh",
 }
 
 # 构建期会与软件包默认配置合并/追加的文件：路由器上可能多出重复块或追加的包用户行。
@@ -220,8 +222,67 @@ RUNTIME_CHECKS = [
 ]
 
 
+def check_dns_servers(d):
+    expected = [
+        ("1", "udp", "119.29.29.29", "default"),
+        ("1", "udp", "223.5.5.5", "default"),
+        ("1", "https", "dns.cloudflare.com/dns-query", "nameserver"),
+        ("1", "https", "dns.google/dns-query", "nameserver"),
+    ]
+    sections = sorted(
+        (key for key in d if re.fullmatch(r"openclash\.@dns_servers\[\d+\]", key)),
+        key=lambda key: int(key.split("[")[1][:-1]),
+    )
+    actual = [tuple(d.get(f"{key}.{opt}") for opt in ("enabled", "type", "ip", "group"))
+              for key in sections]
+    if actual == expected and all(d[key] == "dns_servers" for key in sections):
+        return []
+    return [f"dns_servers 期望 {expected} 实得 {actual}"
+            "（检查 uci set 是否为单参数 key=value，且没有空段或字面引号）"]
+
+
+def check_openclash_runtime():
+    pids, error = run("pidof clash")
+    if error or not re.fullmatch(r"\d+", pids):
+        return False, "无法确定唯一 Clash 进程: " + (error or pids or "未运行")
+    cmdline = router_bytes(f"/proc/{pids}/cmdline")
+    if not cmdline:
+        return False, "无法读取 Clash 进程参数"
+    args = cmdline.decode("utf-8", "replace").rstrip("\0").split("\0")
+    if "-f" not in args or args.index("-f") + 1 >= len(args):
+        return False, "Clash 进程参数缺少 -f 配置路径"
+    config_path = args[args.index("-f") + 1]
+    # UCI config_path 指向订阅原稿；只有进程的 -f 才是经过覆写的运行配置。
+    ruby = '''
+v = YAML.load_file(ARGV[0])
+expected = [
+  [['global-client-fingerprint'], 'chrome'],
+  [['dns', 'cache-size'], 4096],
+  [['dns', 'listen'], '127.0.0.1:7874'],
+  [['dns', 'respect-rules'], true],
+  [['dns', 'nameserver'], ['https://dns.cloudflare.com/dns-query', 'https://dns.google/dns-query']],
+  [['dns', 'default-nameserver'], ['119.29.29.29', '223.5.5.5']]
+]
+expected.each do |path, wanted|
+  actual = path.reduce(v) { |node, key| node.is_a?(Hash) ? node[key] : nil }
+  if actual == wanted
+    puts "PASS #{path.join('.')}"
+  else
+    puts "FAIL #{path.join('.')}: expected=#{wanted.inspect} actual=#{actual.inspect}"
+  end
+end
+puts 'CHECK_COMPLETE'
+'''
+    out, error = run("ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e "
+                     + shlex.quote(ruby) + " " + shlex.quote(config_path), timeout=30)
+    lines = out.splitlines()
+    ok = (not error and len(lines) == 7 and lines[-1] == "CHECK_COMPLETE"
+          and all(line.startswith("PASS ") for line in lines[:-1]))
+    return ok, f"配置={config_path}; " + "; ".join(lines) + (f"; {error}" if error else "")
+
+
 def check_uci_defaults():
-    """校验 4 个首启即消费的 uci-defaults 脚本的运行时效果，返回 [(脚本, ok, 详情)]。"""
+    """校验首启脚本的运行时效果，返回 [(脚本, ok, 详情)]。"""
     results = []
 
     # 90-buffy-dropbear.sh：解绑接口监听（旁路由只有 br-lan，解绑后仍只听本机地址）
@@ -281,13 +342,7 @@ def check_uci_defaults():
         expected[f"{name}_update_week_time"] = "1"
     mism = [f"{k}: 期望{v!r}≠实际{d.get('openclash.config.' + k)!r}"
             for k, v in expected.items() if d.get("openclash.config." + k) != v]
-    # DNS 防泄漏：@dns_servers 的值必须是裸值。若 uci set 写成 "…='$v'" 会把单引号当字面值
-    # 写入（值变成 '119.29.29.29'），OpenClash 解析失败会回落到订阅的国内 DoH → DNS 泄漏。
-    dns_expected = ["119.29.29.29", "223.5.5.5", "dns.cloudflare.com/dns-query", "dns.google/dns-query"]
-    dns_actual = [d.get(f"openclash.@dns_servers[{i}].ip") for i in range(len(dns_expected))]
-    if dns_actual != dns_expected:
-        mism.append(f"dns_servers 期望 {dns_expected} 实得 {dns_actual}"
-                    "（检查 uci set 是否写入了字面引号）")
+    mism.extend(check_dns_servers(d))
     dash_pw = d.get("openclash.config.dashboard_password")
     api_sec = "openclash.@authentication[0]"
     api_en = d.get(f"{api_sec}.enabled")
@@ -331,6 +386,17 @@ def check_uci_defaults():
                     f"/etc/init.d/buffy-credentials 可执行={'✓' if init_ok == 'ok' else '✗'} "
                     f"/etc/rc.d/S99buffy-credentials 软链={'✓' if link_ok == 'ok' else '✗'}"
                     "（应由 94-buffy-credentials.sh enable 建立）"))
+
+    idle, error = run(
+        'for s in wpad relayd radius odhcpd; do '
+        '[ -x "/etc/init.d/$s" ] || continue; '
+        'if /etc/init.d/$s enabled; then echo "enabled=$s"; fi; '
+        'done; '
+        'pidof wpad hostapd wpa_supplicant relayd radius radiusd odhcpd; '
+        'echo CHECK_COMPLETE', timeout=20)
+    ok = not error and idle == "CHECK_COMPLETE"
+    results.append(("95-buffy-idle-services.sh", ok,
+                    "四项服务均未启用、未运行" if ok else f"停用服务检查异常: {idle}; {error}"))
 
     return results
 
@@ -386,12 +452,18 @@ def main():
         if not ok:
             failures += 1
 
-    print("\n===== 3. 运行时状态抽查 =====")
+    print("\n===== 3. Clash 实际运行配置 =====")
+    ok, detail = check_openclash_runtime()
+    print(f"[{'PASS' if ok else 'FAIL'}] {detail}")
+    if not ok:
+        failures += 1
+
+    print("\n===== 4. 运行时状态抽查 =====")
     for label, cmd in RUNTIME_CHECKS:
         o, e = run(cmd)
         print(f"--- {label}\n{o}" + (f"\n[stderr] {e}" if e else ""))
 
-    print("\n===== 4. /etc vs /rom（运行时漂移，仅提示） =====")
+    print("\n===== 5. /etc vs /rom（运行时漂移，仅提示） =====")
     for dirpath, _, files in os.walk(files_dir):
         for fn in files:
             rel = os.path.relpath(os.path.join(dirpath, fn), files_dir).replace(os.sep, "/")
@@ -415,9 +487,9 @@ def main():
 
     print("\n===== 汇总 =====")
     if failures:
-        print(f"❌ 固件一致性：{failures} 项不一致（详见第 1/2 节）")
+        print(f"[FAIL] 固件校验：{failures} 项不一致（详见第 1/2/3 节）")
         return 1
-    print("✅ 固件一致性：全部通过（Files/ 覆盖层 + uci-defaults 运行时效果）")
+    print("[PASS] 固件校验：全部通过（Files/ 覆盖层 + 首启效果 + Clash 运行配置）")
     return 0
 
 

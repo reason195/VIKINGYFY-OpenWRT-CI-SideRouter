@@ -1,3 +1,24 @@
+# 变更记录（2026-11-07）：基础软件包同步到 ImmortalWrt 官方最新快照
+
+**背景**：新刷固件执行 `apk upgrade` 一次出现 29 项升级。根因是 CI 使用的 VIKINGYFY/immortalwrt `main`（f9b0ce7，2026-10-15）包定义落后于官方滚动软件源（downloads.immortalwrt.org/snapshots），不是缓存复用旧包。
+
+## 一、同步方式（`Scripts/Sync-Packages.sh` + `Scripts/patches/immortalwrt-base-packages.patch`）
+
+- 固定官方快照 `4765b657625ec5bbda74b44400465fe043802b30`（2026-11-05），对 13 类基础包生成可审查补丁：openssl、libjson-c、ucode、procd、libnetfilter-conntrack、jansson、libnftnl、nftables、dnsmasq、wifi-scripts、libbpf、uhttpd、uboot-tools；额外补入从 feeds 移到 core 的 libffi（新 ucode ffi 模块依赖，未强制启用）。
+- `Scripts/Packages.sh` 在第三方包更新前调用同步脚本，`|| exit 1` 显式传播失败；补丁先 `git apply --check` 再应用，已完整应用时反向检查后跳过（幂等），冲突时不落盘。
+- 保留 fork 定制：nftables fullcone JSON/evaluate/优化器扩展（libnftnl 同步 1.3.2 配套）、Wi-Fi 出厂默认（CN/OWRT/psk2+ccmp/12345678）与 FT/FILS 无换行哈希、dnsmasq 首启只启动 DEFAULT_INSTANCE、U-Boot 全部板型环境映射。新版 procd 已修复 early SIGHUP/ujail 问题，dnsmasq 改用官方 reload 流程，移除旧 workaround。
+- 不改内核/NSS/fw4/设备 DTS，不动主路由与运行时配置；ucode ABI 变化（20230711→20261009）由整树重编消化，不混用旧目标二进制。
+
+## 二、验证
+
+- 同步行为与范围测试 10 项（含可执行位、来源 SHA、14 目录白名单）；全套 Python 83 项、六套 shell 189 项断言通过。
+- 真实 fork 源码（Linux）应用补丁两次：168 个包文件与审查树逐字节一致、幂等、无类型告警；8 个既有可执行文件权限不变，39 个新文件可执行位与官方归档一致，审查范围外文件全部未动。
+- 底层源码零模糊（--fuzz=0）补丁验证：nftables 1.1.7（含 fullcone 追加 hunk，offset 允许）、dnsmasq 2.93 全部 14 个补丁、json-c 0.19、jansson 2.15.1 通过；归档 SHA256 与配方一致。
+- 局限：本机 WSL 缺 ncurses 开发库，`make defconfig` 未通过，完整固件未编译、未部署；不能声称已产出新固件。
+
+**生效时点**：下次 CI 构建起生效；未来 fork 包目录变化导致补丁冲突时构建会明确停止，需刷新补丁。本次未改上游更新检查逻辑，官方包变化不会自动触发构建。
+
+
 # 变更记录（2026-11-06）：DNS 防泄漏 + 抗 TLS 指纹 + DNS 缓存
 
 **背景**：实机 ipleak 检测发现 DNS 泄漏——出口在境外（AWS 美西），但域名解析由国内 ISP（中国移动 `111.12.63.x`）完成，权威侧因此能看到真实的国内解析位置；流量走了代理、DNS 却没进隧道。根因是订阅自带的 DNS 段为国内 DoH（alidns/doh.pub），且 `enable_custom_dns=0` 时插件不覆写。
@@ -192,6 +213,20 @@
 - 全仓检索确认没有别处依赖这批主机名（脚本/测试/`fstab` 等都无 `.lan` 名字引用），删除影响面仅此文件。
 
 **注意**：`verify_flash.py` 是拿 `Files/` 与设备 `/rom` 逐字节比对的，所以在新固件刷上之前，它会报 `etc/config/dhcp` 不一致——这是预期中的"仓库领先于设备"，不是回归。
+
+
+## 十三、刷机复验与 DNS 修复（2026-11-07）
+
+实机版本为 `IPQ60XX-WIFI-NO-VIKINGYFY-main-main-26.11.06-20.48.49`。旁路由转发、fw4、硬件卸载、DNS 回环监听、fake-ip、凭据初始化和四项空转服务停用通过；但不能判定全部通过。
+
+- `93-buffy-openclash.sh` 的 `uci set key value` 是无效语法，返回 255，留下四个空 `dns_servers` 段。改为单参数 `uci set "key=value"`，验证段数及每段 enabled/type/ip/group。真实 UCI 的隔离配置目录测试连续运行两次均得到正确四段；字面引号会留在值中，先前“UCI 自动剥引号”的说法混淆了 shell 去引号与 UCI 接收参数。
+- Clash 实际加载的是进程 `-f /etc/openclash/MihomoPro.yaml`，不是 UCI `config_path` 指向的订阅原稿 `/etc/openclash/config/MihomoPro.yaml`。运行配置的 `dns.listen` 已是 `127.0.0.1:7874`，此前据原稿缺键推断监听覆写失败不成立。
+- `ruby_edit` 能创建缺失键；失败原因是 `chrome` 未作为 Ruby 字符串传入，以及设备 Ruby `4.0.7` 的数字字面量 AST 节点 `INTEGER` 不在 OpenClash 的白名单内。改为 `'"chrome"'` 和 `'"4096".to_i'`，保留官方记录/应用流程，不修改插件白名单，也不再用 awk 插入 YAML。
+- 覆写钩子使用设备自带 `ruby.sh` 和 `YAML.rb` 在隔离临时目录测试：缺键、已有键、行内 YAML 三种输入各执行两次，六次全部通过，别名引用及无关配置保持语义一致。未替换线上配置、未重启服务。
+- `verify_flash.py` 新增进程实际配置检查和 `95-buffy-idle-services.sh` 运行时断言；错误或不完整的 Ruby 输出不能误判通过。当前实机退出码 1、四项差异：镜像仍保留 host 绑定、覆写脚本与本地修复不同、DNS 四空段、运行配置仍使用国内 nameserver 且缺指纹/缓存键。
+- 本地回归六套 shell 共 189 项断言、三套 Python 共 73 项测试全部通过，合计 262 项；真实设备隔离验证另计。临时旧版副本负控也符合预期：两参数 UCI 写法触发 22 项失败，旧覆写钩子触发 3 项失败，均返回退出码 1；未为负控修改生产源码。语法检查与 `git diff --check` 通过。
+
+本轮只完成本地修复及隔离验证，尚未提交、构建或部署；不能将其写成线上 DNS 泄漏已消除。设备自主升级链路也仍待另行验证。
 
 
 # 变更记录（2026-11-05）：刷机默认不保留配置（sysupgrade -n）
