@@ -180,6 +180,20 @@
 **另外**：本次合并进来的 11-06 DNS 记录把本文件改坏了——5 处正文被跨段落拼接、若干旧内容碎到文件末尾，且 `2026-11-05` 那条的标题行被覆盖掉。现以 `be47f2b` 的完整正文为底重建：新记录（一~五）归位到顶部、旧历史逐行复原。损坏只波及 `CHANGELOG.md`（全仓 56 个跟踪文件扫描，其余均为合法 UTF-8）。
 
 
+## 十二、`Files/etc/config/dhcp` 里的 6 条 host 绑定删除（实测它们是死配置）
+
+**起因**：问「旁路由再存一份固定 IP 有没有意义，主路由已经绑过同样的」。查下来结论比"重复"更糟——**这些记录一条都不生效**。
+
+- 记录本身是进了配置的：`/var/etc/dnsmasq.conf.cfg01411c` 里有 `dhcp-host=80:AF:CA:88:4A:DF,192.168.1.3,WR3600H-4ADF,infinite` 等 4+ 行。
+- 但 `dhcp lan` 四键 `disabled` 后 dnsmasq 没有任何 DHCP 角色（无 `dhcp-range`），`dhcp-host=` 就不产生 DNS 记录：实机 `nslookup Z4S-2XYT.lan / OnePlus-12.lan / HP-G42.lan / WR3600H-4ADF.lan` 全 **NXDOMAIN**，连本机 hostname `OWRT` 也是；`/tmp/hosts/dhcp.cfg01411c` 只剩一行注释头（没租约可写）。
+- 主路由那侧同样不解析 `.lan` 名字（`nslookup Z4S-2XYT.lan 192.168.1.1` → NXDOMAIN），所以删除没有任何"回退到主路由解析"的损失；当前全网其实没有本地主机名解析这回事。
+- 原文件那句注释「只保留为 dnsmasq 的 .lan 名字解析记录」是我在第一轮改造时**没实测就写的结论**，本轮连记录带注释一起纠正。
+- 真要本地域名解析，正确来源是 `/etc/ethers`（`readethers=1` 与 `expand-hosts` 都已就位，且 `/etc/ethers` 的记录与 DHCP 角色无关）；设备上的 `/etc/ethers` 目前还是软件包自带的纯注释模板。这次按"删除"处理，未引入 ethers 文件。
+- 全仓检索确认没有别处依赖这批主机名（脚本/测试/`fstab` 等都无 `.lan` 名字引用），删除影响面仅此文件。
+
+**注意**：`verify_flash.py` 是拿 `Files/` 与设备 `/rom` 逐字节比对的，所以在新固件刷上之前，它会报 `etc/config/dhcp` 不一致——这是预期中的"仓库领先于设备"，不是回归。
+
+
 # 变更记录（2026-11-05）：刷机默认不保留配置（sysupgrade -n）
 
 **诉求**：下次刷机不保留配置。此前两条刷机路径（PC 端 `upgrade_firmware.py`、路由器端 cron `auto_upgrade.sh`）默认都是「保留配置」，而保留路径有个已知死结：`/etc/rc.local` 在 `/lib/upgrade/keep.d/base-files-essential` 的永久保留清单里，保留升级会让它停在旧固件版本、新版的开机钩子永远进不了运行层（2026-09-29 实证）。改成默认不保留，镜像里的 `/etc` 才真正生效。

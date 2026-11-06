@@ -50,40 +50,7 @@ config odhcpd 'odhcpd'
 	option piodir '/tmp/odhcpd-piodir'
 	option hostsdir '/tmp/hosts'
 
-# 本机已不发 DHCP，以下 MAC→IP 绑定不再下发地址，只保留为 dnsmasq 的 .lan 名字解析记录。
-config host
-	option name 'WR3600H-4ADF'
-	option mac '80:AF:CA:88:4A:DF'
-	option ip '192.168.1.3'
-	option leasetime 'infinite'
-
-config host
-	option name 'OnePlus-12'
-	option mac '48:29:D6:7F:37:E9'
-	option ip '192.168.1.6'
-	option leasetime 'infinite'
-
-config host
-	option name 'Z4S-Ubuntu'
-	option ip '192.168.1.8'
-	option leasetime 'infinite'
-	list mac '52:54:00:52:C8:99'
-
-config host
-	option name 'HP-G42'
-	option mac '78:AC:C0:53:B3:D8'
-	option ip '192.168.1.10'
-	option leasetime 'infinite'
-
-config host
-	option name 'Z4S-2XYT'
-	option mac '1C:83:41:E3:70:FE'
-	option ip '192.168.1.12'
-	option leasetime 'infinite'
-
-config host
-	option name 'Meizu-17-Pro'
-	option mac '90:F0:52:A8:82:7C'
-	option ip '192.168.1.17'
-	option leasetime 'infinite'
+# 不放 host/MAC 绑定：dhcpv4 已 disabled 时，`config host` 只生成 dhcp-host= 行、不产生任何
+# DNS 记录（26.11.06 实机：`nslookup <name>.lan 127.0.0.1` 全 NXDOMAIN）。地址与主机名以主路由
+# 的绑定表为唯一权威。真要本地域名解析，来源是 /etc/ethers（readethers=1 已开，与 DHCP 无关）。
 
