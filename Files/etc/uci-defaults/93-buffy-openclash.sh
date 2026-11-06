@@ -51,10 +51,13 @@ done
 unset _i
 _buffy_add_dns() {
 	_s="$(uci add openclash dns_servers)" || return 0
-	uci set "openclash.$_s.enabled='1'"
-	uci set "openclash.$_s.type='$1'"
-	uci set "openclash.$_s.ip='$2'"
-	uci set "openclash.$_s.group='$3'"
+	# 注意：必须用 `uci set <key> <value>` 两参数形式。
+	# 写成 uci set "openclash.$_s.ip='$2'" 会把单引号当成字面值写进去
+	# （值变成 '119.29.29.29'），OpenClash 解析失败会回落到订阅的国内 DoH → DNS 泄漏。
+	uci set "openclash.$_s.enabled" '1'
+	uci set "openclash.$_s.type" "$1"
+	uci set "openclash.$_s.ip" "$2"
+	uci set "openclash.$_s.group" "$3"
 }
 _buffy_add_dns udp 119.29.29.29 default
 _buffy_add_dns udp 223.5.5.5 default

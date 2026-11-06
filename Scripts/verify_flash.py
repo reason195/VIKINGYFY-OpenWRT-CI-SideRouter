@@ -281,6 +281,13 @@ def check_uci_defaults():
         expected[f"{name}_update_week_time"] = "1"
     mism = [f"{k}: 期望{v!r}≠实际{d.get('openclash.config.' + k)!r}"
             for k, v in expected.items() if d.get("openclash.config." + k) != v]
+    # DNS 防泄漏：@dns_servers 的值必须是裸值。若 uci set 写成 "…='$v'" 会把单引号当字面值
+    # 写入（值变成 '119.29.29.29'），OpenClash 解析失败会回落到订阅的国内 DoH → DNS 泄漏。
+    dns_expected = ["119.29.29.29", "223.5.5.5", "dns.cloudflare.com/dns-query", "dns.google/dns-query"]
+    dns_actual = [d.get(f"openclash.@dns_servers[{i}].ip") for i in range(len(dns_expected))]
+    if dns_actual != dns_expected:
+        mism.append(f"dns_servers 期望 {dns_expected} 实得 {dns_actual}"
+                    "（检查 uci set 是否写入了字面引号）")
     dash_pw = d.get("openclash.config.dashboard_password")
     api_sec = "openclash.@authentication[0]"
     api_en = d.get(f"{api_sec}.enabled")
