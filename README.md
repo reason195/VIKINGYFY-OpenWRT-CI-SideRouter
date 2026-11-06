@@ -21,10 +21,10 @@
 |---|---|
 | 出口 | `lan` 静态 `192.168.1.2/24` + `gateway 192.168.1.1`，无 wan/wan6/modem 接口，不再 PPPoE 拨号 |
 | LAN 口 | 原 `wan` 物理口并入 `br-lan`，4 个口全部当交换口用 |
-| DHCP/RA | 全部关闭（`dhcpv4/ra/dhcpv6/ndp = disabled`，不是 `ignore`——`ignore` 会连 dnsmasq 的 DNS 一起摘掉），地址与网关仍由主路由下发 |
+| DHCP/RA | 全部关闭（`dhcpv4/ra/dhcpv6/ndp = disabled`，不是 `ignore`——`ignore` 会连 dnsmasq 的 DNS 一起摘掉），地址与网关由主路由下发 |
 | DNS | 本机 dnsmasq 继续在 br-lan 上服务，上游指向 OpenClash（`127.0.0.1#7874`），`authoritative` 已关 |
-| 接管方式 | 需要走代理的客户端**手动**把「网关 + DNS」填 `192.168.1.2`；不填的照旧直连主路由 |
-| IPv6 | 本机不发 RA，且内核在 `forwarding=1` 时不采纳 RA → 本机一般无全局 IPv6；客户端 IPv6 由主路由直接下发、**不经本机、不走代理** |
+| 接管方式 | 固件本身两种都支持，**当前部署是「全局接管」**：主路由（Cudy WR3600H）的 DHCP 把 `default_gateway` 与 `dns1` 都下发成 `192.168.1.2`，所以全网 IPv4 默认经过本机，不需要逐台手动设置。代价是本机成了 IPv4 的单点——自动刷机/重启那一两分钟内全家断网，客户端要续租或重试才恢复（`dns2=223.5.5.5` 只兜底解析，兜底时 fake-ip 静默失效）。想退回「手动 opt-in」：把主路由 `services/dhcp` 的 `default_gateway`/`dns1` 改回 `192.168.1.1` 即可，本固件无需改动 |
+| IPv6 | 本机不发 RA，且内核在 `forwarding=1` 时不采纳 RA → 本机一般无全局 IPv6；客户端 IPv6 由主路由 RA/RDNSS 直接下发，**不经本机、不走代理**（当前部署接受这一条：有 AAAA 的站点优先走 v6 直连，出境 v6 到 Google/GitHub 受阻时表现为 TLS 握手被断，而不是代理故障） |
 | DDNS + 证书 | **整体移除**：`/etc/config/ddns`、`/etc/config/acme`、`Files/usr/lib/acme/`（vendored dns_duckdns 插件）、`cert_check.sh` 与相关包全删。旁路由不是边缘设备，既取不到公网地址，也没有对外服务的域名 |
 | 防火墙 | 清除引用已删除接口的 `wan` 区域与 `Allow-WAN-*-v6` 规则（残留会让 fw4 整表加载失败）；保留硬件流卸载；`rp_filter=0` 放行同口非对称转发。FullCone 已随 NAT 角色一起移除 |
 
