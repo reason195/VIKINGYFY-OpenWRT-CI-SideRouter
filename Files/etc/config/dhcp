@@ -11,7 +11,9 @@ config dnsmasq
 	option expandhosts '1'
 	option min_cache_ttl '3600'
 	option use_stale_cache '3600'
-	option cachesize '1000'
+	# 注意：不要调大 dnsmasq 缓存。OpenClash 的 disable_masq_cache=1 会在看门狗里
+	# 把 cachesize 强制清零（让所有 DNS 都经 clash，避免 fake-ip 映射陈旧）。
+	option cachesize '0'
 	option nonegcache '1'
 	option quietdhcp '1'
 	option strictorder '1'

@@ -151,9 +151,9 @@
 
 
 
-## 四、dnsmasq 缓存
+## 四、dnsmasq 缓存（已回退）
 
-- `Files/etc/config/dhcp`：`option cachesize '0' → '1000'`。`0` 在 OpenWrt 的 dnsmasq init 里等于「不写 `cache-size`」，实际回落到编译默认 150；改 1000 后局域网重复解析走本地缓存，减少对 clash DNS（7874）的重复查询。实机验证：运行时 `/var/etc/dnsmasq.conf.*` 出现 `cache-size=1000`，DNS 正常。
+- 曾把 `Files/etc/config/dhcp` 的 `cachesize` 改为 1000，但刷机后实测发现 **OpenClash 的 `disable_masq_cache=1` 会在看门狗（`openclash_watchdog.sh`）里把 `cachesize` 强制清零**——它要让所有 DNS 都经 clash，避免 fake-ip 映射陈旧。该改动无效，已回退为 0 并在配置里加注释说明，避免后人再改。
 
 ## 五、DNS listen 收口 + 停用空转服务
 
@@ -268,8 +268,7 @@
 ## 四、`Scripts/verify_flash.py`：新增第 2 节校验项
 
 - `SKIP_ON_ROUTER` 加入 `etc/uci-defaults/94-buffy-credentials.sh`。
-- 新增 `94-buffy-credentials.sh` 检查项：`/etc/init.d/buffy-credentials` 可执行 + `/etc/rc.d/S99buffy-credentials` 软链存在（后者是「`/etc/rc.d/` 不在 keep.d」的直接体现）。
-- 93 检查项中凭据文件缺失的提示文案改为指向新机制。
+- 新增 `94-buffy-credentials.sh` 检查项：`/etc/init.d/buffy-credentials` 可执行 + `/etc/rc.d/S99buffy-credentials` 软链存在（后�entials.sh` 返回 1，属预期；若此时非 0 退出，会被 `/etc/中凭据文件缺失的提示文案改为指向新机制。
 
 ## 五、`Tests/test_buffy_credentials_init.sh`（新增）
 
@@ -407,10 +406,8 @@ uci-defaults 早于 rc.local 执行，故此处必能读到已生成的密钥；
 
 针对"运行一次不能自动刷固件"的实测排障：定位并修复升级链路三处故障（本机依赖损坏、GitHub CDN 直连被重置、路由器 BusyBox 无 nohup），随后 `upgrade_firmware.py --yes` 全流程实机刷入 26.08.22-02.24.55 成功（重启上线、开机自检 PASS、verify_flash 复验全部通过）。
 
-## 一、QCA-ALL 定时任务：每6小时 → 每天凌晨4点
-
-- `.github/workflows/QCA-ALL.yml` cron `0 */6 * * *` → `0 20 * * *`（北京时间凌晨4点，与 Auto-Clean 的 UTC=北京-8h 惯例一致）；无上游更新仍跳过编译。
-
+## 一、QCA-ALL 定时任务：每6小时 → 每天凌晨4�警告页。
+- **修复**：`91-buffy-uhttpd.sh` 不再设置 `redirect_https=1`（改为显式删除该选项）；80(HTTP) 走包默认值局域网直连，443(HTTPS) 与 Let's Encrypt
 ## 二、upgrade_firmware.py：三处修复
 
 - **下载通道**：直连 GitHub release CDN 在国内被反复重置（WinError 10054/10060），3 次重试全败——这就是首次运行失败的直接原因。改为直连 + ghproxy 类镜像（ghproxy.net / gh-proxy.com，可增删 `MIRROR_TEMPLATES`）依次回退，每源重试 3 次、Range 断点续传；新增资产大小校验防镜像劫持/半包。镜像内容照常过 GitHub digest 双重 sha256 校验。实测中直连下到 97% 被掐断，自动丢弃换镜像续传完成。
@@ -519,8 +516,7 @@ uci-defaults 早于 rc.local 执行，故此处必能读到已生成的密钥；
 新增 `Files/usr/share/buffy/boot_selfcheck.sh`（rc.local 开机 120s 后台拉起，flock 防重入）：
 - 校验核心 `/etc/openclash/core/clash_meta` 存在且可执行；
 - 等 `pidof clash` + external-controller(9090/`cn_port`) 应答（最长 5 分钟）；
-- 端到端代理 204（路由器自身经 clash + 显式 7890/7891/7893 端口兜底，最长 5 分钟，规避「启动早期节点未就绪」竞态）；
-- 失败写 `/tmp/boot_selfcheck.log` 并推 ntfy `buffy-reason195-router`（同次开机去重）；成功只更新时间戳不打扰。
+- 端到端代理 204（路由器自身经 clash + 显式/rc.common` 的 `enable()` 函数体 line 42~48）。纯噪音：核心随后照常 `Start Successful`，不影响任何功能lfcheck.log` 并推 ntfy `buffy-reason195-router`（同次开机去重）；成功只更新时间戳不打扰。
 - 守卫按「MihomoPro.yaml 存在即校验」而非 `enable` 标志——因为 init 的 `start_fail()` 失败时会把 enable 清零，只盯 enable 会漏掉最该告警的静默故障。
 
 ## 三、全机体检（非 OpenClash 项）
@@ -635,9 +631,7 @@ openclash 包自带的面板是仓库固定版本（可能滞后）。本轮在�
 
 ### 3. DDNS 修复（IPv6 远程访问）
 - 现象：已有 DuckDNS 配置（reason195.duckdns.org）从不更新——`ip_interface` 写的是接口名 `wan6`（不存在），实际应写设备名 **`pppoe-wan`**；且 `ddns-scripts` 包此前未安装。
-- 处理：修正 `ip_interface`，补装 `ddns-scripts` + `luci-app-ddns`。验证：`reason195.duckdns.org AAAA = 2409:8a5c:1403:4fed:...`（阿里/腾讯 DoH 均可查到），每 10 分钟自动检查更新。
-
-### 4. 防火墙 IPv6 放行（外网访问路由器）
+- 处理：修正 `ip_interface`，补装 `ddns-scripts` + `luci-app-ddns`。验证：`reason195.duckdns.org AAAA = 2409:8a5c:1403:4fed:...`（阿里/腾讯 DoH 均可查到），每 1# 2. dnsmasq DNS 缓存（cachesize=. 防火墙 IPv6 放行（外网访问路由器）
 - 新增两条规则（`family ipv6`，`src wan`）：
   - `tcp 22`（SSH）
   - `tcp 80/443`（LuCI / HTTPS）
@@ -794,6 +788,11 @@ CONFIG_PACKAGE_acme=y
 - **仓库与路由器一致性**：已逐文件比对同步；`ddns`/`acme`/`network`/`system`/`rc.local` 与路由器实时状态字节级一致。`dhcp` 与 live 仅选项顺序差异（功能等价）；`crontabs/root` 未烧入 `coremark` 行（该包安装时自行添加）。
 - **配置简化重构**（本次新增）：已用路由器本地 apk 仓库提取的同版本包默认配置，在隔离 UCI 环境（`uci -c` 包装器）中对 4 个 uci-defaults 脚本做了端到端验证——基线为纯包默认（`DirectInterface=lan`、`redirect_https=0`、wan `forward=REJECT`、`log_level=0`），运行后全部正确应用，`enable` 保持默认 0（避免空配置空转），`dns_servers` 等默认内容原样保留。
 - **关于烘焙的凭据**：`Files/etc/dropbear/*_host_key` 仍烘焙了 SSH 主机密钥（每台用同一固件的设备共享同一套主机密钥）。如担心固件分发后的安全（同密钥可互信 MITM），建议删除——dropbear 首启会自动重新生成。root 密码已由 `ROUTER_ROOT_PASSWORD` secret 在构建时覆盖，刷机后为 secret 值。
+- **OpenClash 升级后**：`disable_masq_cache=1` 是按方案设定的期望状态（cachesize 0）。若后续版本/设置把它改回 0，cachesize 会回升——此时确认是否仍符合方案意图。
+- **自动更新说明**：配置本体（MihomoPro.yaml）是手动 YAML 路径，无订阅条目，无法自动更新；更新配置需手动在 OpenClash 中重新获取或重新编译固件（GEO/GeoIP/白名单数据库已每周自动更新）。
+- **ntfy 订阅**：`https://ntfy.sh/buffy-reason195-cert`（网页直接订阅，或手机 App）。仅失败/临期时推送，不会刷屏。
+- **IPv4 仍是 CGNAT**：外网访问依赖 IPv6，客户端需有 IPv6（手机蜂窝网络默认支持）。
+套主机密钥）。如担心固件分发后的安全（同密钥可互信 MITM），建议删除——dropbear 首启会自动重新生成。root 密码已由 `ROUTER_ROOT_PASSWORD` secret 在构建时覆盖，刷机后为 secret 值。
 - **OpenClash 升级后**：`disable_masq_cache=1` 是按方案设定的期望状态（cachesize 0）。若后续版本/设置把它改回 0，cachesize 会回升——此时确认是否仍符合方案意图。
 - **自动更新说明**：配置本体（MihomoPro.yaml）是手动 YAML 路径，无订阅条目，无法自动更新；更新配置需手动在 OpenClash 中重新获取或重新编译固件（GEO/GeoIP/白名单数据库已每周自动更新）。
 - **ntfy 订阅**：`https://ntfy.sh/buffy-reason195-cert`（网页直接订阅，或手机 App）。仅失败/临期时推送，不会刷屏。
