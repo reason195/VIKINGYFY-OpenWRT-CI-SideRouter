@@ -53,6 +53,10 @@ SKIP_ON_ROUTER = {
 # 比对方式退化为「本地每一行须按序出现在路由器文件中」（见 line_subset）。
 MERGE_FILES = {
     "etc/shadow",  # 构建时追加 avahi/ntp/dbus/dnsmasq/logd/sing-box/ubus 等包用户
+    # 构建时 Scripts/openclash_sub_domains.py 从 MihomoPro.yaml 推导订阅域名后追加，
+    # 路由器侧比仓库多出自动生成的尾部条目（本地行仍按序全部就位）。
+    "etc/openclash/custom/openclash_custom_fake_filter.list",
+    "etc/openclash/custom/openclash_custom_domain_dns_policy.list",
 }
 
 # 连接管理：全程复用一条会话，但刚刷机重启后路由器 SSH/网络可能抖动导致会话死亡，
@@ -271,12 +275,27 @@ expected.each do |path, wanted|
     puts "FAIL #{path.join('.')}: expected=#{wanted.inspect} actual=#{actual.inspect}"
   end
 end
+# 订阅源/规则源域名必须返回真实 IP 且走国内 DoH 直连，否则首启拉订阅会死锁。
+fake_filter = Array(v.dig('dns', 'fake-ip-filter'))
+required_fake = ['+.tohno-0.top', '+.de5.net', '+.github.com', '+.jsdelivr.net']
+missing_fake = required_fake.reject { |d| fake_filter.include?(d) }
+puts(missing_fake.empty? ? 'PASS dns.fake-ip-filter' : "FAIL dns.fake-ip-filter: missing=#{missing_fake.inspect}")
+policy = v.dig('dns', 'nameserver-policy') || {}
+direct_dns = ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query']
+required_domains = ['+.tohno-0.top', '+.de5.net', '+.github.com', '+.jsdelivr.net']
+covered = required_domains.select do |domain|
+  policy.any? do |key, servers|
+    key.to_s.split(',').map(&:strip).include?(domain) && (Array(servers) & direct_dns).any?
+  end
+end
+missing_policy = required_domains - covered
+puts(missing_policy.empty? ? 'PASS dns.nameserver-policy' : "FAIL dns.nameserver-policy: missing=#{missing_policy.inspect}")
 puts 'CHECK_COMPLETE'
 '''
     out, error = run("ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e "
                      + shlex.quote(ruby) + " " + shlex.quote(config_path), timeout=30)
     lines = out.splitlines()
-    ok = (not error and len(lines) == 7 and lines[-1] == "CHECK_COMPLETE"
+    ok = (not error and len(lines) == 9 and lines[-1] == "CHECK_COMPLETE"
           and all(line.startswith("PASS ") for line in lines[:-1]))
     return ok, f"配置={config_path}; " + "; ".join(lines) + (f"; {error}" if error else "")
 

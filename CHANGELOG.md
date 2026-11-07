@@ -1,3 +1,45 @@
+# 变更记录（2026-11-07）：修复刷机后代理不可用（订阅域名解析死锁）
+
+**现象**：路由器自动升级到 `26.11.07-08.05.59`（`sysupgrade -n` 清空配置与 `proxy_provider` 缓存）后，OpenClash 所有 provider 拉取 `EOF`、节点为空，国内直连正常：
+
+```
+[Provider] 优质服务商 pull error: Get "https://m1.tohno-0.top/...": EOF
+[Provider] 备用服务商 pull error: Get "https://sub.reason195.de5.net/...": EOF
+[Provider] Google pull error: Get "https://github.com/666OS/rules/raw/...": EOF
+```
+
+## 根因
+
+1. 机场订阅域名（`m1.tohno-0.top` / `sub.reason195.de5.net`）不在 `fake-ip-filter` → 解析成 `198.18.x.x`；
+2. `proxy-providers` 用 `proxy: DIRECT` 拉取 → 直连 fake-ip 必然 EOF；
+3. `-n` 清空 `proxy_provider` 缓存，首启必须重新拉取 → 节点为空；
+4. 即便域名在 `fake-ip-filter`（github/jsdelivr），解析仍走 `nameserver`（境外 DoH，`respect-rules` 下经代理出口）→ 代理没起来时同样解析不了。
+
+形成闭环死锁：**拉不到订阅 → 代理起不来 → 无法用代理解析 → 更拉不到订阅**。
+
+## 一、静态列表（`Files/etc/openclash/custom/`）
+
+- `openclash_custom_fake_filter.list`：补 `+.tohno-0.top`、`+.de5.net`（返回真实 IP），保留 `+.aisaka-taiga.com` 与 GitHub/jsdelivr 条目。
+- `openclash_custom_domain_dns_policy.list`：新增订阅源/规则源条目，把 `tohno-0.top`、`de5.net`、`aisaka-taiga.com`、`github.com`、`githubusercontent.com`、`githubassets.com`、`jsdelivr.net` 指向国内 DoH（`doh.pub` / `alidns`）**直连**，与 fake-ip-filter 配套，代理未启动也能解析。
+
+## 二、构建期自动推导（新增 `Scripts/openclash_sub_domains.py`）
+
+- `Scripts/Handles.sh` 在注入订阅地址后，从 `MihomoPro.yaml` 的 `proxy-providers` 段提取 URL 主机名（不解析 `rules` / `rule-providers`；跳过 IP 与 `file` provider），幂等追加到上面两个列表。换机场不再需要手改两处；失败只告警、不阻断构建（静态列表兜底）。
+- `Files/etc/uci-defaults/93-buffy-openclash.sh` 补充注释，说明两个列表必须成对配置。
+- `Scripts/verify_flash.py`：两个列表加入 `MERGE_FILES`——构建期会在尾部追加动态域名，按「本地行按序就位」比对，避免误报固件不一致；运行配置校验新增两项，从 Clash 进程 `-f` 指向的实际 YAML 检查订阅域名在 `fake-ip-filter` 与 `nameserver-policy`（国内 DoH）中就位。`Tests/test_verify_flash.py` 同步补齐期望输出。
+- `nameserver-policy` 的逗号分隔 key 已核对 mihomo `parseNameServerPolicy` 源码：无 `geosite:`/`rule-set:` 标记时按逗号拆成多条域名策略；OpenClash `yml_change.sh` 用 `merge!` 合并本列表。
+
+## 三、验证
+
+- 新增 `Tests/test_openclash_sub_domains.py` 6 项：静态兜底含本次机场、只提取 `proxy-providers` 主机、换机场追加、父域覆盖（`+.de5.net` 覆盖 `sub.de5.net`）、二次运行为幂等、无订阅段/缺文件不致命。
+- 相关 Python 44 项（含 verify_flash / overwrite）与 shell 79 项（dns_servers 54 + auth 25）全部通过；`bash -n` / `sh -n` / `py_compile` 通过。
+- 既有 `Tests/test_buffy_credentials_init.sh` 在本机 7 项失败（沙箱 mock 脚本无可执行的 `rc.common`，rc=126），与本次改动无关；`test_upgrade_firmware.py` 因本机缺 `paramiko` 无法加载。
+- **未做实机验证**：本次改动只在仓库内做静态与单元测试，尚未构建固件刷机复测。刷机后应确认 `proxy_provider` 缓存重新生成、`[Provider]` 无 `EOF`、出口正常。
+
+**生效时点**：下次 CI 构建起生效。已刷机的设备需等新 release，或临时手工把上述域名加入路由器 `/etc/openclash/custom/` 的两个列表并重启 OpenClash。
+
+> 换机场时若既未重新构建、又需临时救急：把新订阅域名按 `+.域名` 追加到两个列表，重启 OpenClash 即可。
+
 # 变更记录（2026-11-07）：基础软件包同步到 ImmortalWrt 官方最新快照
 
 **背景**：新刷固件执行 `apk upgrade` 一次出现 29 项升级。根因是 CI 使用的 VIKINGYFY/immortalwrt `main`（f9b0ce7，2026-10-15）包定义落后于官方滚动软件源（downloads.immortalwrt.org/snapshots），不是缓存复用旧包。

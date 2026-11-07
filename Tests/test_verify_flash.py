@@ -30,6 +30,8 @@ PASS_LINES = (
     "PASS dns.respect-rules",
     "PASS dns.nameserver",
     "PASS dns.default-nameserver",
+    "PASS dns.fake-ip-filter",
+    "PASS dns.nameserver-policy",
 )
 PASS_OUTPUT = "\n".join((*PASS_LINES, "CHECK_COMPLETE"))
 IDLE_COMMAND = (

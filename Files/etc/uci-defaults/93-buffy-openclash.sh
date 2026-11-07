@@ -28,6 +28,10 @@ uci set openclash.config.enable_geoip_dat='1'
 # 解析成 198.18.x.x，DIRECT 直连 fake-ip 必然 EOF（alpha 核心行为）。
 # 解法：custom_fakeip_filter 把这些域名加入 fake-ip-filter（解析真实 IP）。
 # 域名列表见 /etc/openclash/custom/openclash_custom_fake_filter.list
+# 配套：同一批域名还要在 openclash_custom_domain_dns_policy.list 里指向国内 DoH 直连，
+# 否则仍会走 nameserver（境外 DoH，respect-rules 下经代理）解析——代理未启动时同样
+# 解析不了，首启拉订阅死锁。两个列表都由构建期 Scripts/openclash_sub_domains.py
+# 从 MihomoPro.yaml 的 proxy-providers 自动补齐。
 uci -q delete openclash.config.custom_fakeip_filter
 uci set openclash.config.custom_fakeip_filter='1'
 uci -q delete openclash.config.skip_proxy_address

@@ -4,3 +4,14 @@
 "geosite:cn,private,apple":
   - https://doh.pub/dns-query
   - https://dns.alidns.com/dns-query
+
+# 订阅源/规则源/更新源：必须在**代理尚未启动**时就能解析。
+# provider 拉取走 proxy: DIRECT，若这些域名走 nameserver（境外 DoH，respect-rules 下
+# 经代理出口）解析，代理没起来就解析不了 → 订阅拉不到 → 代理起不来 → 死锁
+# （26.11.07 实机事故：sysupgrade -n 清空 proxy_provider 缓存后首启必现）。
+# 指向国内 DoH 直连，与 fake-ip-filter 的同类条目配套（那边负责返回真实 IP）。
+# 换机场时由构建期 Scripts/openclash_sub_domains.py 从 MihomoPro.yaml 的
+# proxy-providers 自动补齐；这里保留已知域名作离线兜底。
+"+.tohno-0.top,+.de5.net,+.aisaka-taiga.com,+.github.com,+.githubusercontent.com,+.githubassets.com,+.jsdelivr.net":
+  - https://doh.pub/dns-query
+  - https://dns.alidns.com/dns-query
