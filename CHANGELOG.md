@@ -1,3 +1,17 @@
+# 变更记录（2026-11-07）：修复刷机后代理不可用（订阅域名 fake-ip 导致拉取死锁）
+
+**现象**：刷入 `26.11.07-08.05.59`（`sysupgrade -n` 清空配置）后，OpenClash 所有 provider 拉取 `EOF`，节点为空，代理完全不可用；国内直连正常。
+
+**根因**：机场订阅域名（`m1.tohno-0.top` / `sub.reason195.de5.net`）不在 `fake-ip-filter` 里 → 解析成 `198.18.x.x` → `proxy-providers` 的 `proxy: DIRECT` 直连 fake-ip 必然 EOF。`proxy_provider` 缓存被 `-n` 清空后必须重新拉取，于是代理起不来。另外 `fake-ip-filter` 里的域名（github/jsdelivr）仍会用 `nameserver`（境外 DoH，经代理）解析，代理没起时同样死锁。
+
+**修复**：
+- `Files/etc/openclash/custom/openclash_custom_fake_filter.list`：加入 `+.tohno-0.top`、`+.de5.net`（返回真实 IP）。
+- `Files/etc/openclash/custom/openclash_custom_domain_dns_policy.list`：把订阅源/规则源（`tohno-0.top`、`de5.net`、`github.com`、`githubusercontent.com`、`jsdelivr.net`、`aisaka-taiga.com`）指向国内 DoH 直连，打破「代理未起 → DNS 不可用 → 拉不到订阅」的死锁。
+
+**验证（实机 192.168.1.2）**：订阅域名解析为真实 IP（`172.67.162.89` / `104.21.80.192`）；`proxy_provider` 缓存重新生成（优质 20KB / 备用 1.8KB）；出口 `52.53.212.221`（AWS SJC/US）；YouTube/GitHub 200、百度直连 200；DNS 解析器 Google、ECS 与出口一致，无泄漏。
+
+**注意**：机场域名与订阅相关，更换机场时需同步更新上面两处列表。
+
 # 变更记录（2026-11-06）：DNS 防泄漏 + 抗 TLS 指纹 + DNS 缓存
 
 **背景**：实机 ipleak 检测发现 DNS 泄漏——出口在境外（AWS 美西），但域名解析由国内 ISP（中国移动 `111.12.63.x`）完成，权威侧因此能看到真实的国内解析位置；流量走了代理、DNS 却没进隧道。根因是订阅自带的 DNS 段为国内 DoH（alidns/doh.pub），且 `enable_custom_dns=0` 时插件不覆写。
@@ -268,7 +282,7 @@
 ## 四、`Scripts/verify_flash.py`：新增第 2 节校验项
 
 - `SKIP_ON_ROUTER` 加入 `etc/uci-defaults/94-buffy-credentials.sh`。
-- 新增 `94-buffy-credentials.sh` 检查项：`/etc/init.d/buffy-credentials` 可执行 + `/etc/rc.d/S99buffy-credentials` 软链存在（后�entials.sh` 返回 1，属预期；若此时非 0 退出，会被 `/etc/中凭据文件缺失的提示文案改为指向新机制。
+- 新增 `94-buffy-credentials.sh` 检查项：`/etc/init.d/buffy-credentials` 可执行 + `/etc/rc.d/S99buffy-credentials` 软链存在（后�entials.sh` 返回 1，属预期；若此时非 0 退出，会被 `/etc/中凭据文件缺失的提示文案改为指向新机制。
 
 ## 五、`Tests/test_buffy_credentials_init.sh`（新增）
 
@@ -406,7 +420,7 @@ uci-defaults 早于 rc.local 执行，故此处必能读到已生成的密钥；
 
 针对"运行一次不能自动刷固件"的实测排障：定位并修复升级链路三处故障（本机依赖损坏、GitHub CDN 直连被重置、路由器 BusyBox 无 nohup），随后 `upgrade_firmware.py --yes` 全流程实机刷入 26.08.22-02.24.55 成功（重启上线、开机自检 PASS、verify_flash 复验全部通过）。
 
-## 一、QCA-ALL 定时任务：每6小时 → 每天凌晨4�警告页。
+## 一、QCA-ALL 定时任务：每6小时 → 每天凌晨4�警告页。
 - **修复**：`91-buffy-uhttpd.sh` 不再设置 `redirect_https=1`（改为显式删除该选项）；80(HTTP) 走包默认值局域网直连，443(HTTPS) 与 Let's Encrypt
 ## 二、upgrade_firmware.py：三处修复
 
