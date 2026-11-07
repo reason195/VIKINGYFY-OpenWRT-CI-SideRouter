@@ -1,3 +1,17 @@
+# 变更记录（2026-11-07）：修复刷机后代理不可用（订阅域名 fake-ip 导致拉取死锁）
+
+**现象**：刷入 `26.11.07-08.05.59`（`sysupgrade -n` 清空配置）后，OpenClash 所有 provider 拉取 `EOF`，节点为空，代理完全不可用；国内直连正常。
+
+**根因**：机场订阅域名（`m1.tohno-0.top` / `sub.reason195.de5.net`）不在 `fake-ip-filter` 里 → 解析成 `198.18.x.x` → `proxy-providers` 的 `proxy: DIRECT` 直连 fake-ip 必然 EOF。`proxy_provider` 缓存被 `-n` 清空后必须重新拉取，于是代理起不来。另外 `fake-ip-filter` 里的域名（github/jsdelivr）仍会用 `nameserver`（境外 DoH，经代理）解析，代理没起时同样死锁。
+
+**修复**：
+- `Files/etc/openclash/custom/openclash_custom_fake_filter.list`：加入 `+.tohno-0.top`、`+.de5.net`（返回真实 IP）。
+- `Files/etc/openclash/custom/openclash_custom_domain_dns_policy.list`：把订阅源/规则源（`tohno-0.top`、`de5.net`、`github.com`、`githubusercontent.com`、`jsdelivr.net`、`aisaka-taiga.com`）指向国内 DoH 直连，打破「代理未起 → DNS 不可用 → 拉不到订阅」的死锁。
+
+**验证（实机 192.168.1.2）**：订阅域名解析为真实 IP（`172.67.162.89` / `104.21.80.192`）；`proxy_provider` 缓存重新生成（优质 20KB / 备用 1.8KB）；出口 `52.53.212.221`（AWS SJC/US）；YouTube/GitHub 200、百度直连 200；DNS 解析器 Google、ECS 与出口一致，无泄漏。
+
+**注意**：机场域名与订阅相关，更换机场时需同步更新上面两处列表。
+
 # 变更记录（2026-11-07）：基础软件包同步到 ImmortalWrt 官方最新快照
 
 **背景**：新刷固件执行 `apk upgrade` 一次出现 29 项升级。根因是 CI 使用的 VIKINGYFY/immortalwrt `main`（f9b0ce7，2026-10-15）包定义落后于官方滚动软件源（downloads.immortalwrt.org/snapshots），不是缓存复用旧包。

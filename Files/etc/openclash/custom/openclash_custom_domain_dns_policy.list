@@ -4,3 +4,25 @@
 "geosite:cn,private,apple":
   - https://doh.pub/dns-query
   - https://dns.alidns.com/dns-query
+
+# 引导域名（订阅源 / 规则源）：必须走国内 DNS 直连。
+# 否则 fake-ip-filter 里的域名仍会用 nameserver（境外 DoH，经代理）解析 ——
+# 代理没起来时形成死锁：拉不到订阅 → 没有节点 → 代理起不来。
+"+.tohno-0.top":
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
+"+.de5.net":
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
+"+.github.com":
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
+"+.githubusercontent.com":
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
+"+.jsdelivr.net":
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
+"+.aisaka-taiga.com":
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
