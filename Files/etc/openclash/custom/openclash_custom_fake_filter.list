@@ -7,3 +7,7 @@
 +.githubusercontent.com
 +.githubassets.com
 +.jsdelivr.net
+# 机场订阅源（2026-11-07 新增）：不在列表里会被解析成 198.18.x，
+# proxy: DIRECT 拉取订阅必然 EOF → 节点为空 → 代理不可用（刷机 -n 后必现）。
++.tohno-0.top
++.de5.net
