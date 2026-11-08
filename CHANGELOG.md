@@ -1,3 +1,42 @@
+# 变更记录（2026-11-08）：默认代理增加跨地区自动故障转移
+
+**现象**：刷机后 `默认代理` 默认停在 `香港策略`；香港节点全挂时它不会改选其他地区，`MATCH → 兜底流量 → 默认代理` 整条链路失效，代理完全不通，必须手动切到狮城/日本/美国等策略才恢复。
+
+## 根因
+
+- `默认代理` 是 `type: select`，`proxies` 首项固定为 `香港策略`；select 组不会自动换成员。
+- `香港策略` 也是 select，内部虽有 `香港自动`（url-test），但只在香港节点之间选；香港全挂时组内没有可用节点。
+- `profile.store-selected: true` 会把手动选择写进 `cache.db`，刷机 `-n` 清空后才回到首项，所以每次不保留配置升级都会重新踩到香港。
+
+## 方案（`Files/etc/openclash/custom/openclash_custom_overwrite.sh`）
+
+运行配置生成后注入跨地区 `自动选择` 组，并把它设为 `默认代理` 的首项：
+
+```yaml
+- name: 自动选择
+  type: url-test
+  url: https://www.google.com/generate_204
+  interval: 200
+  tolerance: 50
+  include-all: true
+  filter: ^(?!.*(DIRECT|REJECT|直接连接|...))
+```
+
+- `include-all` 覆盖全部订阅节点（优质 + 备用），`url-test` 按延迟选当前最优存活节点；香港不可用时自动落到日本/新加坡/美国等，不需要手动切。
+- `默认代理` 仍是 select：默认首项 `自动选择`，用户手动选具体地区时 `store-selected` 照常记住，不牺牲手动能力。
+- 不用 `fallback` + 地区策略组：mihomo 的 fallback 只判断成员的 `Alive()`，而 select 组恒为 alive，实测会永远停在香港策略（本机 26.11.08 复现）。
+- `verify_flash.py` 新增两项运行配置断言：`默认代理` 首项为 `自动选择`、`自动选择` 为 `url-test + include-all + filter` 且排除 `DIRECT/REJECT`；`Tests/test_verify_flash.py` 同步更新期望输出（11 行）。
+
+## 验证（192.168.1.2，固件 26.11.08-07.37.37）
+
+- 重启 OpenClash 后运行配置含 `自动选择`（url-test，34 个节点），`默认代理` 首项为它。
+- 用 `ip route add blackhole` 阻断香港 4 个节点 IP（`hk3~hk6.oh-node.com`）模拟香港全挂：`自动选择` 从 `香港策略` 自动切到 `[优] 🇯🇵Japan 02`，Google 204 恢复，出口 `13.158.4.115`；清除 blackhole 后代理持续可用。
+- `verify_flash.py` 运行时检查 11 项全部 PASS；`/rom` 比对仅 `openclash_custom_overwrite.sh` 一项差异，原因是设备仍运行旧固件、脚本为本次临时部署，刷入新固件后一致。
+
+**生效时点**：下次 CI 构建起生效。已刷机设备可把新脚本放到 `/etc/openclash/custom/openclash_custom_overwrite.sh` 并重启 OpenClash，或在面板里把 `默认代理` 手动切到任意可用地区应急。
+
+---
+
 # 变更记录（2026-11-07）：修复刷机后代理不可用（订阅域名解析死锁）
 
 **现象**：路由器自动升级到 `26.11.07-08.05.59`（`sysupgrade -n` 清空配置与 `proxy_provider` 缓存）后，OpenClash 所有 provider 拉取 `EOF`、节点为空，国内直连正常：

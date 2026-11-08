@@ -67,7 +67,7 @@
 
 ## 固件内置功能
 
-- **OpenClash**：核心 / 规则集 / GEO / 大陆白名单 / 面板均在构建期预置，刷机首启即用（首启规则集空缓存死锁已修复）；控制台登录密钥与 SOCKS5/HTTP(S) 认证由 `luci-app-openclash` 首启随机生成（旧版自造值在升级首启自动迁移），快照见 `/etc/openclash-credentials.txt`
+- **OpenClash**：核心 / 规则集 / GEO / 大陆白名单 / 面板均在构建期预置，刷机首启即用（首启规则集空缓存死锁已修复）；默认代理走跨地区 `自动选择`（url-test），香港节点全挂时自动切其他地区，仍可手动指定地区策略（26.11.08）；控制台登录密钥与 SOCKS5/HTTP(S) 认证由 `luci-app-openclash` 首启随机生成（旧版自造值在升级首启自动迁移），快照见 `/etc/openclash-credentials.txt`
 - **订阅域名自愈**：`sysupgrade -n` 会清空 `proxy_provider` 缓存，首启必须重拉订阅。构建期 `Scripts/openclash_sub_domains.py` 从 `MihomoPro.yaml` 的 `proxy-providers` 提取订阅域名，自动补进 `fake-ip-filter`（返回真实 IP）与 `nameserver-policy`（国内 DoH 直连），避免「拉不到订阅 → 代理起不来 → 无法解析 → 更拉不到」死锁（26.11.07 实机事故）；换机场不必手改列表
 - **DNS**：dnsmasq 备用上游（223.5.5.5 / 119.29.29.29 / 2400:3200::1）+ fake-ip 分流；国外域名经代理用境外 DoH 解析、国内走国内 DoH（`custom_name_policy`），避免 DNS 泄漏
 - **防火墙**：旁路由转发链路就位（无悬空 `wan` 区域、`lan` forward=ACCEPT、`ip_forward=1`、`rp_filter=0`）、硬件流量卸载

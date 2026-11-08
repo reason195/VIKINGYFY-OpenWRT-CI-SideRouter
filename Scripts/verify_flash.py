@@ -290,12 +290,21 @@ covered = required_domains.select do |domain|
 end
 missing_policy = required_domains - covered
 puts(missing_policy.empty? ? 'PASS dns.nameserver-policy' : "FAIL dns.nameserver-policy: missing=#{missing_policy.inspect}")
+# 默认代理必须默认走「自动选择」fallback 组，否则香港全挂时整条链路停在不健康策略上。
+groups = Array(v['proxy-groups'])
+default = groups.find { |g| g.is_a?(Hash) && g['name'] == '默认代理' }
+default_auto = default && Array(default['proxies']).first == '自动选择'
+puts(default_auto ? 'PASS proxy-groups.default-auto' : "FAIL proxy-groups.default-auto: 默认代理首项应为自动选择，实得 #{default && Array(default['proxies']).first.inspect}")
+auto = groups.find { |g| g.is_a?(Hash) && g['name'] == '自动选择' }
+auto_ok = auto && auto['type'] == 'url-test' && auto['include-all'] == true \
+          && auto['filter'].to_s.include?('DIRECT') && auto['filter'].to_s.include?('REJECT')
+puts(auto_ok ? 'PASS proxy-groups.auto-select' : "FAIL proxy-groups.auto-select: type=#{auto && auto['type'].inspect} include-all=#{auto && auto['include-all'].inspect} filter=#{auto && auto['filter'].inspect}")
 puts 'CHECK_COMPLETE'
 '''
     out, error = run("ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e "
                      + shlex.quote(ruby) + " " + shlex.quote(config_path), timeout=30)
     lines = out.splitlines()
-    ok = (not error and len(lines) == 9 and lines[-1] == "CHECK_COMPLETE"
+    ok = (not error and len(lines) == 11 and lines[-1] == "CHECK_COMPLETE"
           and all(line.startswith("PASS ") for line in lines[:-1]))
     return ok, f"配置={config_path}; " + "; ".join(lines) + (f"; {error}" if error else "")
 

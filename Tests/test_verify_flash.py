@@ -32,6 +32,8 @@ PASS_LINES = (
     "PASS dns.default-nameserver",
     "PASS dns.fake-ip-filter",
     "PASS dns.nameserver-policy",
+    "PASS proxy-groups.default-auto",
+    "PASS proxy-groups.auto-select",
 )
 PASS_OUTPUT = "\n".join((*PASS_LINES, "CHECK_COMPLETE"))
 IDLE_COMMAND = (
@@ -273,7 +275,7 @@ class OpenClashRuntimeTest(OfflineTestCase):
                 self.assertIs(ok, False)
 
     def test_ruby_fail_output(self):
-        for i in range(6):
+        for i in range(len(PASS_LINES)):
             with self.subTest(check=i):
                 lines = list(PASS_LINES)
                 lines[i] = lines[i].replace("PASS ", "FAIL ", 1)
