@@ -67,7 +67,7 @@
 
 ## 固件内置功能
 
-- **OpenClash**：核心 / 规则集 / GEO / 大陆白名单 / 面板均在构建期预置，刷机首启即用（首启规则集空缓存死锁已修复）；默认代理走跨地区 `自动选择`（url-test），香港节点全挂时自动切其他地区，仍可手动指定地区策略（26.11.08）；控制台登录密钥与 SOCKS5/HTTP(S) 认证由 `luci-app-openclash` 首启随机生成（旧版自造值在升级首启自动迁移），快照见 `/etc/openclash-credentials.txt`
+- **OpenClash**：核心 / 规则集 / GEO / 大陆白名单 / 面板均在构建期预置，刷机首启即用（首启规则集空缓存死锁已修复）；旁路网关兼容 `bypass_gateway_compatible=1` 随镜像固化，保留 `br-lan` 四口桥接；默认代理走跨地区 `自动选择`（url-test），香港节点全挂时自动切其他地区，仍可手动指定地区策略（26.11.08）；控制台登录密钥与 SOCKS5/HTTP(S) 认证由 `luci-app-openclash` 首启随机生成（旧版自造值在升级首启自动迁移），快照见 `/etc/openclash-credentials.txt`
 - **订阅域名自愈**：`sysupgrade -n` 会清空 `proxy_provider` 缓存，首启必须重拉订阅。构建期 `Scripts/openclash_sub_domains.py` 从 `MihomoPro.yaml` 的 `proxy-providers` 提取订阅域名，自动补进 `fake-ip-filter`（返回真实 IP）与 `nameserver-policy`（国内 DoH 直连），避免「拉不到订阅 → 代理起不来 → 无法解析 → 更拉不到」死锁（26.11.07 实机事故）；换机场不必手改列表
 - **DNS**：dnsmasq 备用上游（223.5.5.5 / 119.29.29.29 / 2400:3200::1）+ fake-ip 分流；国外域名经代理用境外 DoH 解析、国内走国内 DoH（`custom_name_policy`），避免 DNS 泄漏
 - **防火墙**：旁路由转发链路就位（无悬空 `wan` 区域、`lan` forward=ACCEPT、`ip_forward=1`、`rp_filter=0`）、硬件流量卸载
@@ -106,10 +106,11 @@ uci commit auto_upgrade
 /usr/share/buffy/auto_upgrade.sh                     # 立即执行一次
 ```
 
-> 为什么默认不保留配置：`/etc/rc.local` 在 `/lib/upgrade/keep.d/base-files-essential` 的保留清单里，
-> 保留升级会让它永远停在旧固件的版本、新版的开机钩子进不了运行层，`sysupgrade -n` 才会用上镜像里的新文件。
-> `-n` 会清空 `/etc/config`（本开关也在里面），刷机后由镜像内置的 `Files/etc/config/auto_upgrade` 恢复
+> 为什么默认不保留配置：本仓库的 `Files/` 与 uci-defaults 已把网络、DNS、OpenClash、密钥占位符等构建期配置全部烤进固件，`sysupgrade -n` 不生成/传递配置备份，改由新镜像里的出厂文件和首启脚本重建，是最干净、可复现的刷法。
+> 反过来，`SAVE_CONFIG=1` 时 sysupgrade 才会按 `/etc/sysupgrade.conf` 和 `/lib/upgrade/keep.d/*` 打包旧文件：`/etc/rc.local` 在 `base-files-essential` 清单里，`luci-app-openclash` 还保留整个 `/etc/openclash/`。保留升级会把旧开机钩子、旧 OpenClash 配置/缓存/面板选择带回，可能覆盖新镜像逻辑，没必要用。
+> `-n` 会清空 `/etc` 覆盖层（本开关也在里面），刷机后由镜像内置的 `Files/etc/config/auto_upgrade` 恢复
 > 默认值（`enabled=1`、`keep_config=0`），`last_tag` 缺失时脚本再按 `/etc/buffy-version` 自愈基线。
+> 只有确需保留运行期手工改动（安装软件、临时 UCI/面板改动、缓存、凭据）时才设 `keep_config=1` 或用 `--keep-config`，并自行处理新旧配置兼容。
 > 排查看 `/tmp/auto_upgrade.log`（每次运行都记录「刷机模式」）与 `uci show auto_upgrade`；
 > 改回保留配置：`uci set auto_upgrade.@auto_upgrade[0].keep_config='1' && uci commit auto_upgrade`。
 

@@ -272,6 +272,7 @@ reset_sbx
 run93
 check_eq "enable_custom_dns" "1" "$(uci -q get openclash.config.enable_custom_dns)"
 check_eq "custom_name_policy" "1" "$(uci -q get openclash.config.custom_name_policy)"
+check_eq "bypass_gateway_compatible" "1" "$(uci -q get openclash.config.bypass_gateway_compatible)"
 check_eq "enable_meta_sniffer" "1" "$(uci -q get openclash.config.enable_meta_sniffer)"
 check_eq "en_mode" "fake-ip" "$(uci -q get openclash.config.en_mode)"
 check_eq "geo_update_day_time" "0" "$(uci -q get openclash.config.geo_update_day_time)"

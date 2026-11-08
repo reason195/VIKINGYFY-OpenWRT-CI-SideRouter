@@ -143,6 +143,7 @@ check_eq "认证段已删除" "0" "$(auth_count)"
 if has openclash.config.dashboard_password; then bad "旧版 Dashboard 密钥未清除"; else ok "旧版 Dashboard 密钥已清除"; fi
 check_eq "无关配置保留" "untouched" "$(val openclash.config.keep_me)"
 check_eq "脚本自身选项仍生效" "fake-ip" "$(val openclash.config.en_mode)"
+check_eq "旁路网关兼容开启" "1" "$(val openclash.config.bypass_gateway_compatible)"
 
 # ---- 用例 2：上游默认值不受影响 ----
 echo "[2] 上游默认认证段保留"

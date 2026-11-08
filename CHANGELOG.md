@@ -1,3 +1,27 @@
+# 变更记录（2026-11-08）：固化 OpenClash 旁路网关兼容，保留 LAN 桥接
+
+**背景**：OpenClash 插件设置勾选「旁路网关（旁路由）兼容」，并提示「设备没有 WLAN 时建议关闭 LAN 接口的桥接选项」。本仓库的 jdcloud_re-cs-07 无 WLAN，但按四口交换需求保留 `br-lan`，因此**只固化兼容开关，不禁用 LAN 桥接**。
+
+## 方案
+
+- `Files/etc/uci-defaults/93-buffy-openclash.sh`：首启写入 `bypass_gateway_compatible=1`。旁路由兼容会在 fw4 srcnat 建 `openclash_post`，对来自非本机源地址、目的非本地网络且非代理标记的转发流量做 masquerade，避免主路由/回程链路因源地址问题丢包。
+- `Files/etc/config/network` **保持不变**：`br-lan` 继续桥接 `lan1/lan2/lan3/wan` 四个物理口，`lan` 仍绑定 `br-lan`，不改成 `lan1`。插件的「无 WLAN 禁用桥接」只是排障建议，不是旁路网关模式的前提条件。
+- `Scripts/verify_flash.py`：运行时 UCI 断言新增 `bypass_gateway_compatible=1`，`OpenClash 关键项`抽查也显示该值；不改 `network.lan.device` 的出厂文件比对（仍是 `br-lan`）。
+- `Tests/test_openclash_dns_servers.sh` 55 项、`test_openclash_auth_migration.sh` 26 项新增/覆盖该开关；全量 Python 89 项通过。
+
+## 验证（192.168.1.2，固件 26.11.08-07.37.37）
+
+- 设备临时开启 `bypass_gateway_compatible=1` 并重启 OpenClash：nft srcnat 出现 `jump openclash_post comment "OpenClash Bypass Gateway Compatible"`，`fib saddr type != local` 的 masquerade 规则有计数。
+- 恢复 `network.lan.device=br-lan` 后，`/etc/config/network` 与 `/rom/etc/config/network` 逐字节一致；`lan1` 有 carrier，`br-lan` 持有 `192.168.1.2/24`。
+- br-lan + 兼容开关组合下连续 5 次 Google 204，YouTube/GitHub/百度均 200，fake-ip 解析 `www.google.com → 198.18.0.6`，出口 `161.153.90.78`；清理了实验用 blackhole 与 `/tmp` 备份。
+- 临时验证过「lan 直接绑定 lan1」也能通，但按用户要求已回滚，不作为仓库改动。
+
+**关于自动刷机**：默认不是保留配置，而是 `keep_config=0` → `sysupgrade -n`。镜像 `Files/` 与 uci-defaults 已承载全部出厂配置，没必要保留：只有 `SAVE_CONFIG=1` 时 sysupgrade 才按 `/etc/sysupgrade.conf`、`/lib/upgrade/keep.d/*` 打包旧文件，其中 `/etc/rc.local`、`/etc/openclash/` 等被保留会覆盖新镜像逻辑。`-n` 让每次升级都从新镜像重建 `/etc`，uci-defaults 再写入 `bypass_gateway_compatible=1`；只有确需保留运行期手工改动时才设 `keep_config=1`。README 的「为什么默认不保留配置」已按此口径修正。
+
+**生效时点**：下次 CI 构建起生效。当前设备已临时设为兼容开关开启；构建设置默认仍是 `sysupgrade -n` 不保留配置，刷机后由镜像内的 uci-defaults 写入该 UCI 选项。
+
+---
+
 # 变更记录（2026-11-08）：默认代理增加跨地区自动故障转移
 
 **现象**：刷机后 `默认代理` 默认停在 `香港策略`；香港节点全挂时它不会改选其他地区，`MATCH → 兜底流量 → 默认代理` 整条链路失效，代理完全不通，必须手动切到狮城/日本/美国等策略才恢复。

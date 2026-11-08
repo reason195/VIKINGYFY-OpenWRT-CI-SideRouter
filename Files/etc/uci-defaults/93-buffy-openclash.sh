@@ -36,6 +36,12 @@ uci -q delete openclash.config.custom_fakeip_filter
 uci set openclash.config.custom_fakeip_filter='1'
 uci -q delete openclash.config.skip_proxy_address
 uci set openclash.config.skip_proxy_address='1'
+# 旁路网关（旁路由）兼容：客户端把默认网关指到本机时，来自非本机源地址的转发流量
+# 经 OpenClash 透明代理后需要 srcnat 伪装，否则回程链路可能丢包。插件的「无 WLAN
+# 建议关闭 LAN 桥接」只是排障建议：本仓库按四口交换需求保留 br-lan，仅开启兼容
+# 开关；26.11.08 实机验证 br-lan + 兼容开关下 204/出口正常。
+uci -q delete openclash.config.bypass_gateway_compatible
+uci set openclash.config.bypass_gateway_compatible='1'
 # DNS 防泄漏（2026-11-06）：订阅自带的 DNS 段通常是国内 DoH（alidns/doh.pub），
 # 且 enable_custom_dns=0 时插件不覆写 → 国外域名由国内解析器解析，权威侧看到国内 ISP
 # 解析器（DNS 泄漏），而流量却从境外节点出去。

@@ -214,7 +214,7 @@ def find_named_section(d, type_prefix, name):
 RUNTIME_CHECKS = [
     ("固件版本", "cat /etc/openwrt_release"),
     ("内核", "uname -a"),
-    ("OpenClash 关键项", "uci show openclash 2>/dev/null | grep -E 'en_mode|operation_mode|redirect_dns|enable_respect_rules|core_type|core_version|github_address_mod|enable_geoip_dat|skip_proxy_address|disable_masq_cache|custom_fakeip_filter|china_ip_route|log_level|enable=|config_path'"),
+    ("OpenClash 关键项", "uci show openclash 2>/dev/null | grep -E 'en_mode|operation_mode|redirect_dns|enable_respect_rules|core_type|core_version|github_address_mod|enable_geoip_dat|skip_proxy_address|bypass_gateway_compatible|disable_masq_cache|custom_fakeip_filter|china_ip_route|log_level|enable=|config_path'"),
     ("核心与规则集", "ls -la /etc/openclash/core/clash_meta 2>/dev/null; ls /etc/openclash/rule_provider/ 2>/dev/null | wc -l; wc -c /etc/openclash/config/MihomoPro.yaml 2>/dev/null"),
     ("clash 进程与端口", "pidof clash; netstat -tln 2>/dev/null | grep -E ':(9090|7890|7891|7893|7874)'"),
     ("开机自检", "ls -la /etc/.openclash-bootstrap-done 2>/dev/null; cat /tmp/boot_selfcheck.log 2>/dev/null | tail -3"),
@@ -357,6 +357,7 @@ def check_uci_defaults():
         "core_type": "Meta", "core_version": "linux-arm64",
         "github_address_mod": "https://testingcf.jsdelivr.net/", "enable_geoip_dat": "1",
         "custom_fakeip_filter": "1", "skip_proxy_address": "1",
+        "bypass_gateway_compatible": "1",
         "enable_custom_dns": "1", "custom_name_policy": "1",
         "enable_meta_sniffer": "1", "enable_meta_sniffer_pure_ip": "1",
         "geo_auto_update": "1", "geoip_auto_update": "1", "geosite_auto_update": "1",
