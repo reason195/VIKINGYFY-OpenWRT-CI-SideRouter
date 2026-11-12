@@ -1,3 +1,39 @@
+# 变更记录（2026-11-12）：修复 Google Play 下载 CDN 在 fake-ip 旁路由下 0 字节挂死
+
+**现象**：旁路由挂代理后，魅族手机的 Google Play 能浏览、能列出更新，但点安装/更新一直卡在「等待中…」，最后「无法安装」；同网络的一加12 正常。Finsky 日志显示 APK 分片 `bytes_downloaded=0`、反复 `reviveDownload`/`retry`。
+
+## 根因
+
+Play 的下载端点 `redirector.gvt1.com` 被 `china_ip_route=1` 按国内 IP 直连，CDN 按来源地域把请求 302 到**国内 CDN 域名**：
+
+- `rrX---sn-….gvt1-cn.com`
+- `rrX---sn-….xn--ngstr-lra8j.com`（punycode 等价域）
+
+这些域名没进 `fake-ip-filter`，DNS 返回 `198.18.x.x` fake-ip → 流量进 TProxy → 命中 `RULE-SET,Google` 走境外代理节点 → 从境外回连国内 CDN（`120.232.234.0/24`）拿不到数据，Clash `/connections` 里该连接 `download:0`。
+同一个包的不同分片会落在**不同** CDN 域名上，所以表现为「部分分片 SUCCEEDED、最后一个分片卡死、UI 一直等待中」，也解释了同网络另一台手机可能正常。
+
+实测：分片域名走代理 30 秒 0 字节；`--resolve` 到真实 IP 直连 0.28 秒返回 404/302。
+
+## 方案（只动 OpenClash 自定义规则与白名单，不改订阅模板）
+
+- **新增** `Files/etc/openclash/custom/openclash_custom_rules.list`：9 条规则。最前 3 条让国内 CDN 域名走 `直接连接`；其余把国际 CDN/API 域名钉在 `谷歌服务` 代理，避免 `RULE-SET,Download` / `GEOIP,CN` 的直连规则抢先命中造成「fake-ip + DIRECT」二次挂死。
+- `Files/etc/openclash/custom/openclash_custom_fake_filter.list`：追加 `+.gvt1-cn.com`、`+.gvt2-cn.com`、`+.xn--ngstr-lra8j.com`，让这些域名返回真实 IP 直连。构建期 `Scripts/openclash_sub_domains.py` 只在尾部追加订阅域名，不会覆盖。
+- `Files/etc/uci-defaults/93-buffy-openclash.sh`：首启写入 `enable_custom_clash_rules=1`。
+- `Files/etc/rc.local`：与 fake-ip 白名单同款自愈（开关被改回 0 / 列表被删时从 `/rom` 恢复）。
+- `Scripts/verify_flash.py`：`expected` 加 `enable_custom_clash_rules=1`；`RUNTIME_CHECKS` 抽查显示该值；运行配置 Ruby 断言补 `fake-ip-filter` 的三个域名与 `rules` 中的直连/代理规则。
+- **新增** `Tests/test_openclash_play_cdn.py`：6 项出厂文件静态断言。
+
+## 验证（192.168.1.2，2026-11-12 实机）
+
+- 修前：`curl -L https://redirector.gvt1.com/edgedl/...` 30 秒 0 字节；分片域名 `nslookup` → `198.18.13.198`；Clash 连接 `download:0`、`chains` 为日本节点。
+- 修后：分片域名 DNS 返回 `120.232.234.67` / `120.232.234.69`；同一 URL **200 / 1606064 B / 1.04 s**。
+- Play 商店队列 `runningDownloadsCount: 0, queuedCount: 0`；`com.cudy.cloudapp` 与 `com.openai.chatgpt` 均 `INSTALLED`（`INSTALLED events: 2 / FAILED: 0`），8.7 MB 的 `config.arm64_v8a` 分片 `SUCCEEDED`。
+- 生效需重启 OpenClash；Finsky 旧队列会按退避自动重试，无需用户手动取消。
+
+**生效时点**：下次 CI 构建起固化进固件。当前设备已临时落盘生效（uci + 两个列表），但默认 `sysupgrade -n` 会覆盖运行期改动，因此必须合入仓库。
+
+---
+
 # 变更记录（2026-11-08）：固化 OpenClash 旁路网关兼容，保留 LAN 桥接
 
 **背景**：OpenClash 插件设置勾选「旁路网关（旁路由）兼容」，并提示「设备没有 WLAN 时建议关闭 LAN 接口的桥接选项」。本仓库的 jdcloud_re-cs-07 无 WLAN，但按四口交换需求保留 `br-lan`，因此**只固化兼容开关，不禁用 LAN 桥接**。

@@ -58,6 +58,19 @@ uci -q get openclash.config.custom_fakeip_filter | grep -q '^1$' || {
 }
 chmod 644 /etc/openclash/custom/openclash_custom_fake_filter.list 2>/dev/null
 
+# 自定义规则自愈（Google Play 下载 CDN 修复）：与 fake-ip 白名单同样做双保险，
+# 避免运行时开关被改回 0 或列表被误删后，Play 商店下载再次卡在「等待中…」。
+# 列表烤在 /rom，直接从 /rom 恢复，不内嵌第二份副本。
+uci -q get openclash.config.enable_custom_clash_rules | grep -q '^1$' || {
+  uci set openclash.config.enable_custom_clash_rules='1'
+  uci commit openclash 2>/dev/null
+}
+[ -s /etc/openclash/custom/openclash_custom_rules.list ] || {
+  mkdir -p /etc/openclash/custom 2>/dev/null
+  cp /rom/etc/openclash/custom/openclash_custom_rules.list /etc/openclash/custom/openclash_custom_rules.list 2>/dev/null
+}
+chmod 644 /etc/openclash/custom/openclash_custom_rules.list 2>/dev/null
+
 # OpenClash 控制台/API 凭据快照：密钥本体由 luci-app-openclash 自带 uci-defaults 首启随机生成
 # （本仓库不自造，见 93-buffy-openclash.sh），这里只把当前生效值同步到文本文件便于命令行查询。
 #

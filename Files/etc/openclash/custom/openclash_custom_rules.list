@@ -1,0 +1,22 @@
+rules:
+  # Google Play 下载 CDN 修复（2026-11-12 实机，见 CHANGELOG.md）。
+  # 旁路由 fake-ip + respect-rules 模式下，Play 商店的 APK 分片经
+  # redirector.gvt1.com 302 到 Google 中国 CDN 域名 *.gvt1-cn.com 及其
+  # punycode 等价域 *.xn--ngstr-lra8j.com。这些域名若被 RULE-SET,Google 判给
+  # 境外代理节点，从境外回连国内 CDN 会 0 字节挂死，界面一直「等待中…」/
+  # 「无法安装」；而分片域名拿到 fake-ip 后又被代理，两者互相打架。
+  # 解法：国内 CDN 域名走 DIRECT 直连（同时在 openclash_custom_fake_filter.list
+  # 里加入白名单，让 DNS 返回真实 IP，china_ip_route=1 下直接放行）；
+  # 国际 CDN/API 域名强制走「谷歌服务」代理，避免 RULE-SET,Download 与
+  # GEOIP,CN 的直连规则抢先命中导致「fake-ip + DIRECT」再次挂死。
+  # 注意：「直接连接」「谷歌服务」是 MihomoPro.yaml 模板里的策略组名，
+  # 与 openclash_custom_overwrite.sh 对模板的依赖一致；换模板时需同步。
+  - DOMAIN-SUFFIX,gvt1-cn.com,直接连接
+  - DOMAIN-SUFFIX,gvt2-cn.com,直接连接
+  - DOMAIN-SUFFIX,xn--ngstr-lra8j.com,直接连接
+  - DOMAIN-SUFFIX,gvt1.com,谷歌服务
+  - DOMAIN-SUFFIX,gvt2.com,谷歌服务
+  - DOMAIN-SUFFIX,googleapis.com,谷歌服务
+  - DOMAIN-SUFFIX,googleusercontent.com,谷歌服务
+  - DOMAIN,play.googleapis.com,谷歌服务
+  - DOMAIN,android.clients.google.com,谷歌服务

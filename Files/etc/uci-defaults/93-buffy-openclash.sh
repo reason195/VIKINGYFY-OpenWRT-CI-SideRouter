@@ -34,6 +34,13 @@ uci set openclash.config.enable_geoip_dat='1'
 # 从 MihomoPro.yaml 的 proxy-providers 自动补齐。
 uci -q delete openclash.config.custom_fakeip_filter
 uci set openclash.config.custom_fakeip_filter='1'
+
+# Google Play 下载 CDN 修复（2026-11-12 实机）：启用自定义规则文件。
+# 国内 CDN 域名必须直连、国际 CDN/API 强制走代理，规则见
+# /etc/openclash/custom/openclash_custom_rules.list，与
+# openclash_custom_fake_filter.list 配套（DNS 返回真实 IP 直连）。
+uci -q delete openclash.config.enable_custom_clash_rules
+uci set openclash.config.enable_custom_clash_rules='1'
 uci -q delete openclash.config.skip_proxy_address
 uci set openclash.config.skip_proxy_address='1'
 # 旁路网关（旁路由）兼容：客户端把默认网关指到本机时，来自非本机源地址的转发流量

@@ -214,7 +214,7 @@ def find_named_section(d, type_prefix, name):
 RUNTIME_CHECKS = [
     ("固件版本", "cat /etc/openwrt_release"),
     ("内核", "uname -a"),
-    ("OpenClash 关键项", "uci show openclash 2>/dev/null | grep -E 'en_mode|operation_mode|redirect_dns|enable_respect_rules|core_type|core_version|github_address_mod|enable_geoip_dat|skip_proxy_address|bypass_gateway_compatible|disable_masq_cache|custom_fakeip_filter|china_ip_route|log_level|enable=|config_path'"),
+    ("OpenClash 关键项", "uci show openclash 2>/dev/null | grep -E 'en_mode|operation_mode|redirect_dns|enable_respect_rules|core_type|core_version|github_address_mod|enable_geoip_dat|skip_proxy_address|bypass_gateway_compatible|disable_masq_cache|enable_custom_clash_rules|custom_fakeip_filter|china_ip_route|log_level|enable=|config_path'"),
     ("核心与规则集", "ls -la /etc/openclash/core/clash_meta 2>/dev/null; ls /etc/openclash/rule_provider/ 2>/dev/null | wc -l; wc -c /etc/openclash/config/MihomoPro.yaml 2>/dev/null"),
     ("clash 进程与端口", "pidof clash; netstat -tln 2>/dev/null | grep -E ':(9090|7890|7891|7893|7874)'"),
     ("开机自检", "ls -la /etc/.openclash-bootstrap-done 2>/dev/null; cat /tmp/boot_selfcheck.log 2>/dev/null | tail -3"),
@@ -277,9 +277,21 @@ expected.each do |path, wanted|
 end
 # 订阅源/规则源域名必须返回真实 IP 且走国内 DoH 直连，否则首启拉订阅会死锁。
 fake_filter = Array(v.dig('dns', 'fake-ip-filter'))
-required_fake = ['+.tohno-0.top', '+.de5.net', '+.github.com', '+.jsdelivr.net']
+required_fake = ['+.tohno-0.top', '+.de5.net', '+.github.com', '+.jsdelivr.net', '+.gvt1-cn.com', '+.gvt2-cn.com', '+.xn--ngstr-lra8j.com']
 missing_fake = required_fake.reject { |d| fake_filter.include?(d) }
 puts(missing_fake.empty? ? 'PASS dns.fake-ip-filter' : "FAIL dns.fake-ip-filter: missing=#{missing_fake.inspect}")
+# Google Play 国内下载 CDN 必须在 rules 里直连、国际 CDN/API 必须走代理，
+# 否则 fake-ip 模式下 APK 分片会 0 字节挂死（商店一直「等待中…」）。
+rules = Array(v['rules'])
+required_rules = [
+  'DOMAIN-SUFFIX,gvt1-cn.com,直接连接',
+  'DOMAIN-SUFFIX,gvt2-cn.com,直接连接',
+  'DOMAIN-SUFFIX,xn--ngstr-lra8j.com,直接连接',
+  'DOMAIN-SUFFIX,gvt1.com,谷歌服务',
+  'DOMAIN-SUFFIX,googleapis.com,谷歌服务',
+]
+missing_rules = required_rules.reject { |r| rules.include?(r) }
+puts(missing_rules.empty? ? 'PASS rules.google-play-cdn' : "FAIL rules.google-play-cdn: missing=#{missing_rules.inspect}")
 policy = v.dig('dns', 'nameserver-policy') || {}
 direct_dns = ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query']
 required_domains = ['+.tohno-0.top', '+.de5.net', '+.github.com', '+.jsdelivr.net']
@@ -356,7 +368,7 @@ def check_uci_defaults():
         "enable_respect_rules": "1", "log_level": "error", "china_ip_route": "1",
         "core_type": "Meta", "core_version": "linux-arm64",
         "github_address_mod": "https://testingcf.jsdelivr.net/", "enable_geoip_dat": "1",
-        "custom_fakeip_filter": "1", "skip_proxy_address": "1",
+        "custom_fakeip_filter": "1", "skip_proxy_address": "1", "enable_custom_clash_rules": "1",
         "bypass_gateway_compatible": "1",
         "enable_custom_dns": "1", "custom_name_policy": "1",
         "enable_meta_sniffer": "1", "enable_meta_sniffer_pure_ip": "1",

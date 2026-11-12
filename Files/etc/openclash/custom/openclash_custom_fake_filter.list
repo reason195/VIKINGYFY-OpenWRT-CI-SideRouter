@@ -15,3 +15,11 @@
 +.githubusercontent.com
 +.githubassets.com
 +.jsdelivr.net
+
+# Google Play 国内下载 CDN（2026-11-12 实机）：这些域名是 redirector.gvt1.com
+# 302 后的 APK 分片域名（gvt1-cn.com 及其 punycode 等价域）。境外代理节点回连
+# 国内 CDN 会 0 字节挂死，Play 商店一直「等待中…」/「无法安装」。
+# 必须返回真实 IP 直连；配套规则见 openclash_custom_rules.list。
++.gvt1-cn.com
++.gvt2-cn.com
++.xn--ngstr-lra8j.com
