@@ -67,10 +67,10 @@
 
 ## 固件内置功能
 
-- **OpenClash**：核心 / 规则集 / GEO / 大陆白名单 / 面板均在构建期预置，刷机首启即用（首启规则集空缓存死锁已修复）；旁路网关兼容 `bypass_gateway_compatible=1` 随镜像固化，保留 `br-lan` 四口桥接；默认代理走跨地区 `自动选择`（url-test），香港节点全挂时自动切其他地区，仍可手动指定地区策略（26.11.08）；控制台登录密钥与 SOCKS5/HTTP(S) 认证由 `luci-app-openclash` 首启随机生成（旧版自造值在升级首启自动迁移），快照见 `/etc/openclash-credentials.txt`
+- **OpenClash**：核心 / 规则集 / GEO / 大陆白名单 / 面板均在构建期预置，刷机首启即用（首启规则集空缓存死锁已修复）；旁路网关兼容 `bypass_gateway_compatible=1` 随镜像固化，保留 `br-lan` 四口桥接；默认出口**美国优先**（`默认代理` 首项 `美国策略` → `美国自动` url-test，美国节点内自动切；所有含美国策略的选择组写 `default-selected`），需要跨地区兜底时在 `openclash_custom_overwrite.sh` 里设 `US_FIRST=0` 即恢复 `自动选择` 优先（26.11.14）；内置覆写模块 `OC_SelfHeal_AntiLeak` 把 url-test/fallback/load-balance 组统一为 60s 健康检查、`expected-status: 204`、`empty-fallback: DIRECT`（全挂不断网、代价是直连），并把 `proxy-providers` 刷新降到 1h、健康检查 60s（26.11.14）；控制台登录密钥与 SOCKS5/HTTP(S) 认证由 `luci-app-openclash` 首启随机生成（旧版自造值在升级首启自动迁移），快照见 `/etc/openclash-credentials.txt`
 - **订阅域名自愈**：`sysupgrade -n` 会清空 `proxy_provider` 缓存，首启必须重拉订阅。构建期 `Scripts/openclash_sub_domains.py` 从 `MihomoPro.yaml` 的 `proxy-providers` 提取订阅域名，自动补进 `fake-ip-filter`（返回真实 IP）与 `nameserver-policy`（国内 DoH 直连），避免「拉不到订阅 → 代理起不来 → 无法解析 → 更拉不到」死锁（26.11.07 实机事故）；换机场不必手改列表
 - **Google Play 下载 CDN 分流**（2026-11-12）：`fake-ip` 旁路由下，Play 的 APK 分片会被 `redirector.gvt1.com` 302 到国内 CDN 域名（`*.gvt1-cn.com` 及 punycode 等价域 `*.xn--ngstr-lra8j.com`），走境外代理节点会 0 字节挂死、商店一直「等待中…」。构建期固化 `Files/etc/openclash/custom/openclash_custom_rules.list`（国内 CDN 直连、国际 CDN/API 钉在代理）与 `openclash_custom_fake_filter.list` 白名单（返回真实 IP），并由 `93-buffy-openclash.sh` / `rc.local` 启用与自愈 `enable_custom_clash_rules=1`；`verify_flash.py` 带运行时断言，详见 CHANGELOG 首节
-- **DNS**：dnsmasq 备用上游（223.5.5.5 / 119.29.29.29 / 2400:3200::1）+ fake-ip 分流；国外域名经代理用境外 DoH 解析、国内走国内 DoH（`custom_name_policy`），避免 DNS 泄漏
+- **DNS**：dnsmasq 备用上游（223.5.5.5 / 119.29.29.29 / 2400:3200::1）+ fake-ip 分流；国外域名经代理用境外 DoH 解析、国内走国内 DoH（`custom_name_policy`），避免 DNS 泄漏。旁路由**只走 IPv4**：`ipv6_enable=0`、`ipv6_dns=0`、`filter_aaaa_dns=1` 与 dnsmasq `filter_aaaa=1` 固化在镜像里，内核不返回 AAAA、dnsmasq 直接丢弃 AAAA，客户端不会拿到真实 IPv6 绕过分流（26.11.14 实测泄漏路径）
 - **防火墙**：旁路由转发链路就位（无悬空 `wan` 区域、`lan` forward=ACCEPT、`ip_forward=1`、`rp_filter=0`）、硬件流量卸载
 - **监控告警**：ntfy + Telegram 双通道（见下方脚本）
 

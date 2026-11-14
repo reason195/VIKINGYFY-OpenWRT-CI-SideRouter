@@ -1,3 +1,30 @@
+# 变更记录（2026-11-14）：代理自愈 + 美国优先 + 旁路由只走 IPv4
+
+**背景**：旁路由（192.168.1.2，ImmortalWrt + OpenClash/Mihomo Meta）实测发现三处可固化的问题——节点失效后组内切换慢且全挂时直接断流；默认出口停在香港；IPv6 关闭后仍有 AAAA 绕过分流。
+
+## 改动
+
+| 文件 | 内容 |
+|---|---|
+| `Files/etc/openclash/overwrite/OC_SelfHeal_AntiLeak`（新增） | 内置覆写模块：`url-test`/`fallback`/`load-balance` 统一 `lazy: false`、`interval: 60`、`timeout: 5000`、`expected-status: 204`、`empty-fallback: DIRECT`；`proxy-providers` 刷新 `interval: 3600` + `health-check` 60s（`cp.cloudflare.com/generate_204`，`lazy: false`，`expected-status: 204`）；`dns.ipv6: false` |
+| `Files/etc/uci-defaults/93-buffy-openclash.sh` | `ipv6_enable=0`、`ipv6_dns=0`、`filter_aaaa_dns=1`、`append_wan_dns=0`、`append_default_dns=0`、`enable_redirect_dns=1`、`store_fakeip=1`；幂等登记上述模块（`enable=1`，`order=现有最大+1`，`config=all`） |
+| `Files/etc/config/dhcp` | `filter_aaaa '1'`（与 `ipv6_dns=0` 一致，AAAA 直接丢弃） |
+| `Files/etc/openclash/custom/openclash_custom_overwrite.sh` | `默认代理` 首项改为 `美国策略`，并对所有含 `美国策略` 的 `select` 组写 `default-selected: 美国策略`；`US_FIRST=0` 可回退为 `自动选择` 优先 |
+| `Tests/test_openclash_overwrite_module.py`（新增） | 校验模块三段格式、YAML 段字段、uci-defaults 登记与 shell 语法 |
+
+## 实测验证（2026-11-14，192.168.1.2）
+
+- 模块启用后：`/proxies/香港自动` → `emptyFallback: DIRECT`、`expectedStatus: 204`；provider `interval: 3600`、`health-check.interval: 60`；重启后留存（`profile.store-selected: true`）。
+- 节点故障切换：`美国自动`（url-test）候选含 4 个 `[优]` + 6 个 `[备]` 美国节点，`[备]` 节点有 `cp.cloudflare.com` 与 `google.com` 两条测速历史，优节点全挂时会在备节点中选延迟最低者。
+- DNS：客户端 A 记录返回 `198.18.x.x`（fake-ip），AAAA 为空，硬编码 `@8.8.8.8` 也被劫持到 fake-ip；出口 `54.176.193.226`（US/California）。
+- hook 仿真：`默认代理.proxies = [美国策略, 自动选择, 香港策略, 直接连接]`，`default-selected: 美国策略`；`新闻媒体` 同步设为美国，`国内流量` 不受影响。
+
+## 注意
+
+- `empty-fallback: DIRECT` 是 fail-open：全部节点失效时直连（不断网，但暴露真实出口）。要零泄漏改成 `REJECT`（断网也不直连）。
+- 旁路由只走 IPv4 是有意设计；以后若启用 IPv6，需同时改 `ipv6_enable`/`ipv6_dns`/`filter_aaaa_dns` 与 dnsmasq `filter_aaaa`（OpenClash 指南 §9.5）。
+- 模块文件在 `sysupgrade -n` 后仍随镜像存在，UCI 登记由 `93-buffy-openclash.sh` 每次首启重建，因此不依赖 `keep_config=1`。
+
 # 变更记录（2026-11-12）：修复 Google Play 下载 CDN 在 fake-ip 旁路由下 0 字节挂死
 
 **现象**：旁路由挂代理后，魅族手机的 Google Play 能浏览、能列出更新，但点安装/更新一直卡在「等待中…」，最后「无法安装」；同网络的一加12 正常。Finsky 日志显示 APK 分片 `bytes_downloaded=0`、反复 `reviveDownload`/`retry`。

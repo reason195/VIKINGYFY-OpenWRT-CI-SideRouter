@@ -5,6 +5,11 @@ CONFIG_FILE="$1"
 
 . /usr/share/openclash/ruby.sh
 
+# 默认出口地区优先级：1=美国优先（默认），0=跨地区自动选择优先。
+# 由构建/uci-defaults 通过环境变量覆盖，也可以手动 export 后执行本脚本。
+US_FIRST="${US_FIRST:-1}"
+export US_FIRST
+
 # ruby_edit 的值按 Ruby 表达式执行，字符串必须自带引号。
 ruby_edit "$CONFIG_FILE" "['global-client-fingerprint']" '"chrome"'
 # Ruby 4 的 INTEGER 节点不在插件白名单内；to_i 保持缓存大小为整数。
@@ -49,7 +54,26 @@ ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e '
   auto.delete("proxies")
 
   tail = default["proxies"].include?("直接连接") ? ["直接连接"] : []
-  default["proxies"] = ["自动选择"] + members + tail
+  us_first = ENV["US_FIRST"] != "0"
+
+  # 地区优先级：默认让「默认代理」与美国相关的 select 组首选「美国策略」。
+  # 美国策略内部仍是 url-test（美国自动），节点失效会在美国节点间自动切换；
+  # 需要跨地区兜底时把 US_FIRST 设为 0，恢复原来的「自动选择」优先。
+  head = []
+  if us_first && members.include?("美国策略")
+    head << "美国策略"
+    members = members.reject { |n| n == "美国策略" }
+  end
+  default["proxies"] = head + ["自动选择"] + members + tail
+
+  if us_first
+    groups.each do |g|
+      next unless g.is_a?(Hash) && g["type"] == "select"
+      next unless g["proxies"].is_a?(Array) && g["proxies"].include?("美国策略")
+      g["default-selected"] ||= "美国策略"
+    end
+  end
+
   YAML.dump(data, path)
 ' "$CONFIG_FILE" 2>/dev/null || true
 

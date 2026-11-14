@@ -149,5 +149,40 @@ unset _i _sec _u _p
 # 查询：LuCI → OpenClash → 覆写设置；或 uci show openclash | grep -E 'dashboard_password|authentication'
 # 快照：/etc/init.d/buffy-credentials 每次开机调 /usr/share/buffy/export_credentials.sh 同步到
 #      /etc/openclash-credentials.txt，便于命令行查看当前生效值。
+# ── 旁路由只走 IPv4 ────────────────────────────────────────────────
+# 主路由已关 IPv6。旁路由继续下发/代理 IPv6 只会让 AAAA 绕过 fake-ip 分流，
+# 客户端拿真实 IPv6 直连主路由，等于把真实出口暴露出去（26.11.14 实机抓到的泄漏路径）。
+# ipv6_enable=0 关 IPv6 出站；ipv6_dns=0 让内核不返回 AAAA；filter_aaaa_dns=1 让 dnsmasq 丢弃 AAAA。
+# 若以后要在旁路由上启用 IPv6，需同时改这三项（09-settings-dns-ac-ipv6.md §9.5）。
+for _kv in ipv6_enable ipv6_dns filter_aaaa_dns append_wan_dns append_default_dns enable_redirect_dns store_fakeip; do
+	uci -q delete "openclash.config.$_kv"
+done
+uci set openclash.config.ipv6_enable='0'
+uci set openclash.config.ipv6_dns='0'
+uci set openclash.config.filter_aaaa_dns='1'
+uci set openclash.config.append_wan_dns='0'
+uci set openclash.config.append_default_dns='0'
+uci set openclash.config.enable_redirect_dns='1'
+uci set openclash.config.store_fakeip='1'
+unset _kv
+
+# ── 登记内置覆写模块（幂等）────────────────────────────────────────
+# 模块文件随镜像发布在 /etc/openclash/overwrite/OC_SelfHeal_AntiLeak；
+# sysupgrade -n 会清空 /etc/config，但镜像文件仍在，因此每次首启都在这里重新登记。
+# enable=1：刷完即生效，无需到 LuCI 手动开启。
+MODULE_NAME='OC_SelfHeal_AntiLeak'
+MODULE_FILE="/etc/openclash/overwrite/$MODULE_NAME"
+if [ -s "$MODULE_FILE" ] && ! uci -q show openclash | grep -q "\.name='$MODULE_NAME'"; then
+	_max_order="$(uci -q show openclash | sed -n "s/^openclash\.[^.=]*\.order='\([0-9]*\)'$/\1/p" | sort -n | tail -1)"
+	uci add openclash config_overwrite >/dev/null
+	uci set "openclash.@config_overwrite[-1].name=$MODULE_NAME"
+	uci set "openclash.@config_overwrite[-1].type=file"
+	uci add_list "openclash.@config_overwrite[-1].config=all"
+	uci set "openclash.@config_overwrite[-1].enable=1"
+	uci set "openclash.@config_overwrite[-1].order=$(( ${_max_order:-0} + 1 ))"
+	unset _max_order
+fi
+unset MODULE_NAME MODULE_FILE
+
 uci commit openclash
 exit 0
