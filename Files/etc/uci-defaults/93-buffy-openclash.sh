@@ -152,14 +152,16 @@ unset _i _sec _u _p
 # ── 旁路由只走 IPv4 ────────────────────────────────────────────────
 # 主路由已关 IPv6。旁路由继续下发/代理 IPv6 只会让 AAAA 绕过 fake-ip 分流，
 # 客户端拿真实 IPv6 直连主路由，等于把真实出口暴露出去（26.11.14 实机抓到的泄漏路径）。
-# ipv6_enable=0 关 IPv6 出站；ipv6_dns=0 让内核不返回 AAAA；filter_aaaa_dns=1 让 dnsmasq 丢弃 AAAA。
-# 若以后要在旁路由上启用 IPv6，需同时改这三项（09-settings-dns-ac-ipv6.md §9.5）。
-for _kv in ipv6_enable ipv6_dns filter_aaaa_dns append_wan_dns append_default_dns enable_redirect_dns store_fakeip; do
+# ipv6_enable=0 关 IPv6 出站；ipv6_dns=0 让内核不返回 AAAA；dnsmasq filter_aaaa=1（在
+# Files/etc/config/dhcp）直接丢弃 AAAA。注意 filter_aaaa_dns 是 /etc/init.d/openclash
+# 的**内部还原标记**，ipv6_dns=0 时它恒为 0，写 1 会让 revert_dnsmasq() 把 filter_aaaa
+# 还原成空值，反而放开 AAAA（26.11.14 刷机实测），因此这里不碰它。
+# 若以后要在旁路由上启用 IPv6，需同时改 ipv6_enable / ipv6_dns / filter_aaaa（指南 §9.5）。
+for _kv in ipv6_enable ipv6_dns append_wan_dns append_default_dns enable_redirect_dns store_fakeip; do
 	uci -q delete "openclash.config.$_kv"
 done
 uci set openclash.config.ipv6_enable='0'
 uci set openclash.config.ipv6_dns='0'
-uci set openclash.config.filter_aaaa_dns='1'
 uci set openclash.config.append_wan_dns='0'
 uci set openclash.config.append_default_dns='0'
 uci set openclash.config.enable_redirect_dns='1'

@@ -60,6 +60,9 @@ class OverwriteModuleTest(unittest.TestCase):
         self.assertIn("OC_SelfHeal_AntiLeak", script)
         self.assertIn("enable=1", script)
         self.assertIn("config_overwrite", script)
+        # filter_aaaa_dns 是 openclash init 的内部还原标记，uci-defaults 写它会
+        # 触发 revert_dnsmasq() 把 dhcp.filter_aaaa 清空（26.11.14 刷机实测）。
+        self.assertNotRegex(script, r"(?m)^uci set openclash\.config\.filter_aaaa_dns")
 
     def test_shell_syntax(self):
         sh = shutil.which("sh")

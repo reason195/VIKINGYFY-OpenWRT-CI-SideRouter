@@ -27,7 +27,7 @@ config dnsmasq
 	option dns_redirect '1'
 	option ednspacket_max '1232'
 	# 旁路由只走 IPv4：主路由已关 IPv6，这里再丢掉 AAAA，避免客户端拿到真实 IPv6
-	# 绕过 fake-ip 分流（OpenClash ipv6_dns=0 / filter_aaaa_dns=1 与此一致）。
+	# 绕过 fake-ip 分流（OpenClash ipv6_dns=0 / 覆写模块 dns.ipv6=false 与此一致）。
 	option filter_aaaa '1'
 	option filter_a '0'
 	option sequential_ip '1'
