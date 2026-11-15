@@ -82,6 +82,7 @@
 | `boot_selfcheck.sh` | 开机自检：确认 OpenClash 核心 + 代理 204 就绪 |
 | `health_check.sh` | 每日体检：出口连通性/DNS/备用上游/防火墙转发链路/流量卸载 |
 | `proxy_watch.sh` | 每小时代理 204 探测，失败告警（运行中守护） |
+| `us_failover.sh` | 每分钟兜底「美国自动」：当前节点掉线就切到存活节点；「美国策略」被钉在死节点时切回「美国自动」（26.11.15 实机） |
 | `first_boot_download.sh` | 首启引导：更新 GEO/白名单/面板，幂等仅执行一次 |
 | `auto_upgrade.sh` | 每日 10:07 检查 GitHub 新 release，自动下载校验并 sysupgrade（见「路由器端自动升级」） |
 

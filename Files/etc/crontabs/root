@@ -7,6 +7,9 @@
 #路由器全面体检（出口连通性/DNS/dnsmasq备用上游/防火墙转发链路/流量卸载），异常时 ntfy/Telegram 告警
 30 6 * * * /usr/share/buffy/health_check.sh
 
+# 美国线路兜底：url-test 卡在死节点 / 策略组被钉在死节点时切回可用节点（26.11.15 实机问题）
+* * * * * /usr/share/buffy/us_failover.sh
+
 #运行中周期性代理健康检查（每小时 204 探测，失败推 ntfy/Telegram 告警）
 5 * * * * /usr/share/buffy/proxy_watch.sh
 
