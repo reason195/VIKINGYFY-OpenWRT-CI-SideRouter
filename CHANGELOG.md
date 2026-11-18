@@ -1,3 +1,11 @@
+# 变更记录（2026-11-18）：撤销 Google Play CDN 分流与默认代理美国优先
+
+- 撤销 `80c73df`：移除 Google Play 国内下载 CDN（`gvt1-cn.com` / `gvt2-cn.com` / punycode 等价域）的 fake-ip 白名单与直连规则、`enable_custom_clash_rules` 固化/自愈、`verify_flash.py` 断言与 `test_openclash_play_cdn.py`。保留后续 11-14/11-15 的代理自愈模块、IPv4-only DNS 与美国线路兜底。
+- 撤销 `d78d903` 中的「默认代理首项改美国策略」：`openclash_custom_overwrite.sh` 恢复首项为跨地区 `自动选择`，移除 `US_FIRST` 开关与 `default-selected: 美国策略` 注入。保留同提交的自愈模块、IPv4-only DNS 与 `us_failover.sh`。
+- 实测取舍：用户决定回退这两项，README 同步去掉对应描述；CHANGELOG 下方的 11-12/11-14 历史条目保留原样，仅作当时改动的记录。
+
+---
+
 # 变更记录（2026-11-15）：美国线路失效兜底（url-test 卡死节点 / 策略组钉死节点）
 
 **现象**：优质服务商 4 个美国节点全部 `alive=false`，但「美国自动」（url-test）的 `now` 仍停在 `[优] 🇺🇸United States 02`；`/group/美国自动/delay` 已只返回 5 个存活的 `[备]` 节点，组选中项却不更新，代理断流。另外「美国策略」是 Selector，一旦手动钉在某个单节点（实测钉在已死的 `[备] TUIC`），该节点掉线后同样不会切走。
