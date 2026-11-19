@@ -8,7 +8,7 @@
 - 目标：`qualcommax/ipq60xx`，aarch64
 - 角色：**旁路由**（不拨号、不发 DHCP），挂在主路由下做 LAN 内的转发网关 + DNS + OpenClash 代理节点
 - 登录地址：`192.168.1.2`，root 密码由 GitHub Secret `ROUTER_ROOT_PASSWORD` 注入；主路由为 `192.168.1.1`
-- 构建：每日凌晨 4:00（北京时间）检查上游 [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt)（main 分支），有更新才自动编译并发布 release；旧 release 自动清理只留 5 个（本仓库独立计数）
+- 构建：每日 00:17（北京时间）检查上游 [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt)（main 分支），有更新才自动编译并发布 release；提前到午夜并错开整点，是为了让 release 赶在旁路由 10:07 自动升级之前产出（GitHub 定时实测延迟 2~6 小时，详见 CHANGELOG 26.11.19）；旧 release 自动清理只留 5 个（本仓库独立计数）
 
 > ⚠️ 新仓库首次构建前必须重配 Secrets，缺失会直接终止构建：
 > `ROUTER_ROOT_PASSWORD`、`HP_ADDRESS`、`HP_UUID`、`MAIN_AIRPORT_SUB`、`BACKUP_AIRPORT_SUB`。
