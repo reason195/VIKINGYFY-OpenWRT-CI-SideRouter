@@ -1,3 +1,20 @@
+# 变更记录（2026-11-19）：补传 TAILSCALE_AUTHKEY 到可复用 workflow + 占位符接线回归测试
+
+**现象**：`TAILSCALE_AUTHKEY` 已在 21:53 配置到仓库 Secrets（早于 22:18 的手动构建），但构建日志仍打印 `WARN: 未配置可选 Secret TAILSCALE_AUTHKEY，占位符置空` + `blanked TAILSCALE_AUTHKEY`——固件里的引导脚本拿到空密钥，刷机后 Tailscale 不会自动登录。构建本身 success，无任何报错。
+
+**根因**：可复用 workflow 只接收**调用方显式传递**的 secret。上一次改动加了 `WRT-CORE.yml` 的 `workflow_call.secrets` 声明与 Custom Settings 步骤 env，却漏了 `QCA-ALL.yml` 调用处的 `secrets:` 映射，secret 在调用边界就丢了。
+
+## 改动
+
+- `.github/workflows/QCA-ALL.yml`：调用 WRT-CORE 的 `secrets:` 映射补 `TAILSCALE_AUTHKEY: ${{secrets.TAILSCALE_AUTHKEY}}`。
+- 新增 `Tests/test_secret_wiring.py`：扫描 `Files/` 里所有 `@@XXX@@` 占位符，断言四层接线齐全——① 调用方 secrets 映射 ② WRT-CORE `workflow_call.secrets` 声明 ③ Custom Settings 步骤 env ④ `Settings.sh` 的 `inject_secret`。纯文本解析，无 YAML 依赖。
+- 反向验证：把 caller 换回修复前版本跑该测试，精确失败在 `test_caller_passes_secret (secret='TAILSCALE_AUTHKEY')`，确认能抓到本类漏传。
+
+## 注意
+
+- 以后新增任何 Secret，四层都要改；只改 WRT-CORE 不改调用方＝静默失效，且构建照样成功。
+- 该测试只校验接线，不校验 Secret 是否真的在仓库里配置（值读不到）；可选 Secret 未配置时置空是预期行为。
+
 # 变更记录（2026-11-19）：CI 定时提前到 00:17，让 release 赶在 10:07 自动升级之前
 
 **现象**：旁路由 auto_upgrade 每日 10:07 执行，但最近三天的 release 分别在 11:31 / 11:15 / 12:02（北京时间）才发布，全部晚于升级窗口——设备永远刷到前一天的固件（实机 `/etc/buffy-version` 停在 `26.11.18-10.23.39`，而当天已有 `26.11.19-11.26.04`）。这也是实机仍带着已被 revert 的 US_FIRST 逻辑、国内流量误走美国节点的原因。
