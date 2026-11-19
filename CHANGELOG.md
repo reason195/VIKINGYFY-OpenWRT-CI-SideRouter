@@ -1,3 +1,30 @@
+# 变更记录（2026-11-19）：Tailscale 子网路由固化 + 国内流量误路由回归防护
+
+**背景**：实机（192.168.1.2，当时跑的是 11-18 revert 之前构建的固件）访问国内站点普遍 TTFB 1.6~2.7s（淘宝整页 11s、QQ 4.1s、B 站 6.6s），DNS 解析 300~450ms。`/proxies` 显示「国内流量」组 `now=美国策略`——国内域名全被送到美国节点再回源（反向代理）。规则集与带宽均正常（China 110193 条、ChinaIP 9642 条已加载，国内镜像实测 8MB/s）。
+
+根因是 `US_FIRST` 注入条件过宽：所有含「美国策略」选项的 select 组都被写 `default-selected: 美国策略`，连「国内流量」也被改写；`respect-rules: true` 下 DoH 上游同样按规则走，DNS 一起变慢。**该逻辑已由 11-18 的 `0ad3269` 整段 revert，本仓库无需再修**；实机侧已就地止血（切回「直接连接」+ 排除名单）并重启核心验证。本次只补一条回归防护，避免该注入逻辑将来被重新引入。
+
+## 改动
+
+- `Tests/test_openclash_overwrite.py`：新增回归断言——overwrite 脚本不得再出现 `default-selected` 注入（11-19 实机事故防护）。
+- 新增 `Files/etc/init.d/tailscaled`：procd 服务（TUN 模式，`--state` 在 /overlay，崩溃自愈，启动时开 br-lan 的 UDP GRO 转发）。
+- 新增 `Files/usr/share/buffy/tailscale_bootstrap.sh`：幂等补齐静态二进制（固定版本，放 /overlay，不占 squashfs）、拉起服务、按需用 `TAILSCALE_AUTHKEY` 登录并宣告 `192.168.1.0/24`；`--accept-dns=false` 不接管 DNS。
+- `Files/etc/uci-defaults/92-buffy-firewall.sh`：新增 `tailscale` 区域 + `tailscale↔lan` 双向 forwarding。**区域用 `device=tailscale0` 直绑，不建 network interface**——netifd 接管会 flush 掉 tailscaled 的 100.x/32 地址，local 表缺该地址后回程包被送到主路由丢失（实机踩过，只有重启 tailscaled 才恢复）。
+- `Files/etc/crontabs/root`：`*/10` 幂等执行 bootstrap（`sysupgrade -n` 会清空 /overlay）。
+- `Scripts/Settings.sh` + `.github/workflows/WRT-CORE.yml`：新增可选 Secret `TAILSCALE_AUTHKEY`。
+- `Tests/test_side_router_firewall.sh`：新增用例 8（tailscale 区域设备直绑、双向转发、幂等）；mock uci 补 `add` 语义。
+
+## 实测（2026-11-19，192.168.1.2）
+
+- 修复前→后：淘宝 11.6s→0.10s、QQ 4.13s→0.22s、B 站 6.63s→0.30s、京东 2.54s→0.09s、知乎 2.32s→0.16s；DNS 300~450ms→3~5ms。国外不受影响（Google/YouTube 200）。
+- 重启 OpenClash 后复查：`/proxies` 国内流量 `now=直接连接`，tproxy（7892/7895）与 DNS 劫持规则齐全。
+- 仓库版 `tailscaled` init 脚本实机重启：地址 100.78.175.43 恢复，LAN 内 ping 100.x 1.1ms；`tailscale_bootstrap.sh` 幂等（未配密钥时只提示不登录）。
+
+## 注意
+
+- 以后若要恢复「美国优先」类注入，必须排除国内流量 / 直接连接 / 定位类组，否则国内流量全走远端节点。
+- 未配置 `TAILSCALE_AUTHKEY` 时只装不登录，需手动 `tailscale up` 网页授权一次；建议配置 Reusable + Ephemeral 密钥，刷机后免重授权。
+
 # 变更记录（2026-11-18）：撤销 Google Play CDN 分流与默认代理美国优先
 
 - 撤销 `80c73df`：移除 Google Play 国内下载 CDN（`gvt1-cn.com` / `gvt2-cn.com` / punycode 等价域）的 fake-ip 白名单与直连规则、`enable_custom_clash_rules` 固化/自愈、`verify_flash.py` 断言与 `test_openclash_play_cdn.py`。保留后续 11-14/11-15 的代理自愈模块、IPv4-only DNS 与美国线路兜底。

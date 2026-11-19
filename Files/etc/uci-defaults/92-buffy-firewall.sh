@@ -56,5 +56,54 @@ _drop_wan_ref rule src wan
 _drop_wan_ref rule dest wan
 unset _round _hit _i
 
+# --- Tailscale 子网路由区域（设备直绑，不建 network interface）---
+# 反例（26.11.19 实机踩过）：用 `uci set network.tailscale=interface` + proto=none 让 netifd
+# 接管 tailscale0，netifd 会 flush 掉 tailscaled 自己配置的 100.x/32 地址，local 表缺该地址，
+# 回程包被默认路由送到主路由后丢失——外网客户端能连进来但会话建立不起来，LAN 内 ping 100.x
+# 也不通，且只有重启 tailscaled 才恢复。
+# fw4 的 zone 支持直接写 device（不走 netifd），所以这里只建 zone + 双向 forwarding：
+#   tailscale → lan：外网设备访问 LAN 内主机（SSH/管理页/服务）
+#   lan → tailscale：LAN 主机的回程包（旁路由是网关，回程天然经过本机，无需 masq）
+# tailscale0 由 tailscaled 创建；fw4 对尚不存在的设备只是规则永不命中，不会加载失败。
+_ts_zone_idx=''
+_i=0
+while [ -n "$(uci -q get "firewall.@zone[$_i]")" ]; do
+	if [ "$(uci -q get "firewall.@zone[$_i].name")" = "tailscale" ]; then
+		_ts_zone_idx=$_i
+		break
+	fi
+	_i=$((_i + 1))
+done
+if [ -z "$_ts_zone_idx" ]; then
+	uci -q add firewall zone >/dev/null
+	_ts_zone_idx=$_i
+fi
+uci -q set "firewall.@zone[$_ts_zone_idx].name=tailscale"
+uci -q delete "firewall.@zone[$_ts_zone_idx].network"
+uci -q set "firewall.@zone[$_ts_zone_idx].device=tailscale0"
+uci -q set "firewall.@zone[$_ts_zone_idx].input=ACCEPT"
+uci -q set "firewall.@zone[$_ts_zone_idx].output=ACCEPT"
+uci -q set "firewall.@zone[$_ts_zone_idx].forward=ACCEPT"
+for _pair in "tailscale:lan" "lan:tailscale"; do
+	_src=${_pair%%:*}
+	_dst=${_pair##*:}
+	_found=''
+	_j=0
+	while [ -n "$(uci -q get "firewall.@forwarding[$_j]")" ]; do
+		if [ "$(uci -q get "firewall.@forwarding[$_j].src")" = "$_src" ] && \
+		   [ "$(uci -q get "firewall.@forwarding[$_j].dest")" = "$_dst" ]; then
+			_found=1
+			break
+		fi
+		_j=$((_j + 1))
+	done
+	if [ -z "$_found" ]; then
+		uci -q add firewall forwarding >/dev/null
+		uci -q set "firewall.@forwarding[$_j].src=$_src"
+		uci -q set "firewall.@forwarding[$_j].dest=$_dst"
+	fi
+done
+unset _ts_zone_idx _pair _src _dst _found _j
+
 uci commit firewall
 exit 0

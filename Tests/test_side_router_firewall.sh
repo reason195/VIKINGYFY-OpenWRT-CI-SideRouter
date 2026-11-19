@@ -109,6 +109,11 @@ delete)
 	esac
 	;;
 commit) exit 0 ;;
+add)
+	# 只需要「追加到末尾」的语义：调用方随后按 @type[N] 写入字段，
+	# 存在性判定走 get 的 @type[N]（有字段即存在）。
+	exit 0
+	;;
 *) exit 1 ;;
 esac
 exit 0
@@ -171,7 +176,7 @@ EOF
 run_target
 check_eq "退出码 0" "0" "$?"
 check_eq "无 wan 引用残留" "0" "$(wan_refs)"
-check_eq "区域仅剩 lan" "lan " "$(zone_names)"
+check_eq "区域为 lan + tailscale" "lan tailscale " "$(zone_names)"
 check_eq "lan 前移到 [0] 且 forward 保留" "ACCEPT" "$(val 'firewall.@zone[0].forward')"
 check_eq "lan 的 network 未被牵连" "lan" "$(val 'firewall.@zone[0].network')"
 check_eq "无关规则保留" "Allow-LAN-DHCP " "$(rule_names)"
@@ -194,7 +199,7 @@ firewall.@zone[1].forward=ACCEPT
 EOF
 run_target
 check_eq "无 wan 引用残留" "0" "$(wan_refs)"
-check_eq "区域仅剩 lan" "lan " "$(zone_names)"
+check_eq "区域为 lan + tailscale" "lan tailscale " "$(zone_names)"
 check_eq "lan 索引前移到 [0]" "lan" "$(val 'firewall.@zone[0].name')"
 check_eq "lan forward 保留" "ACCEPT" "$(val 'firewall.@zone[0].forward')"
 
@@ -214,7 +219,7 @@ firewall.@rule[1].src=lan
 EOF
 run_target
 check_eq "无 wan 引用残留" "0" "$(wan_refs)"
-check_eq "区域仅剩 lan" "lan " "$(zone_names)"
+check_eq "区域为 lan + tailscale" "lan tailscale " "$(zone_names)"
 check_eq "dest=wan 规则已删、lan 规则前移" "Allow-LAN-DHCP " "$(rule_names)"
 check_eq "保留的规则内容完整" "lan" "$(val 'firewall.@rule[0].src')"
 
@@ -233,7 +238,7 @@ firewall.@rule[1].src=lan
 firewall.@rule[1].dest=lan
 EOF
 run_target
-check_eq "lan 区域保留" "lan " "$(zone_names)"
+check_eq "lan 区域保留" "lan tailscale " "$(zone_names)"
 check_eq "两条 lan 规则保留" "2" "$(count_pref 'firewall.@rule\[.*\].name=')"
 check_eq "自定义规则未被动到" "lan" "$(val 'firewall.@rule[1].dest')"
 check_eq "默认项仍写入" "1" "$(val 'firewall.@defaults[0].flow_offloading_hw')"
@@ -279,6 +284,29 @@ check_eq "卸载开关仍写入" "1" "$(val 'firewall.@defaults[0].flow_offloadi
 check_eq "lan 区域未受影响" "lan" "$(val 'firewall.@zone[0].name')"
 run_target
 check_eq "重复执行后依然为空" "" "$(val 'firewall.@defaults[0].fullcone6')"
+
+# ---- 用例 8：Tailscale 区域（设备直绑 + 双向 forwarding，幂等） ----
+echo "[8] tailscale 区域：设备直绑、双向转发、幂等"
+cat > "$UCI_STATE" <<'EOF'
+firewall.@defaults[0].input=ACCEPT
+firewall.@zone[0].name=lan
+firewall.@zone[0].network=lan
+firewall.@zone[0].input=ACCEPT
+firewall.@zone[0].output=ACCEPT
+firewall.@zone[0].forward=ACCEPT
+EOF
+run_target
+check_eq "区域为 lan + tailscale" "lan tailscale " "$(zone_names)"
+check_eq "tailscale 绑 device=tailscale0" "tailscale0" "$(val 'firewall.@zone[1].device')"
+check_eq "tailscale 不写 network（避免 netifd 接管 tailscale0）" "" "$(val 'firewall.@zone[1].network')"
+check_eq "tailscale input=ACCEPT" "ACCEPT" "$(val 'firewall.@zone[1].input')"
+check_eq "tailscale forward=ACCEPT" "ACCEPT" "$(val 'firewall.@zone[1].forward')"
+check_eq "forwarding 共 2 条" "2" "$(count_pref 'firewall.@forwarding\[.*\].src=')"
+check_eq "第 1 条 tailscale→lan" "tailscale lan" "$(val 'firewall.@forwarding[0].src') $(val 'firewall.@forwarding[0].dest')"
+check_eq "第 2 条 lan→tailscale" "lan tailscale" "$(val 'firewall.@forwarding[1].src') $(val 'firewall.@forwarding[1].dest')"
+run_target
+check_eq "重复执行不新增区域" "lan tailscale " "$(zone_names)"
+check_eq "重复执行不新增 forwarding" "2" "$(count_pref 'firewall.@forwarding\[.*\].src=')"
 
 echo
 echo "==== 结果：$PASS passed, $FAIL failed ===="

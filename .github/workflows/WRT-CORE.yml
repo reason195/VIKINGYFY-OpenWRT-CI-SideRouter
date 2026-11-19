@@ -61,6 +61,8 @@ on:
         required: false
       SINGBOX_SS_PASSWORD:
         required: false
+      TAILSCALE_AUTHKEY:
+        required: false
 
 permissions:
   contents: write
@@ -229,6 +231,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{secrets.TELEGRAM_BOT_TOKEN}}
           TELEGRAM_CHAT_ID: ${{secrets.TELEGRAM_CHAT_ID}}
           SINGBOX_SS_PASSWORD: ${{secrets.SINGBOX_SS_PASSWORD}}
+          TAILSCALE_AUTHKEY: ${{secrets.TAILSCALE_AUTHKEY}}
 
       - name: Download Packages
         if: env.WRT_TEST != 'true'

@@ -68,6 +68,52 @@ class OverwriteHookTest(unittest.TestCase):
     def test_inline_dns_and_unrelated_keys(self):
         self.assert_calls('dns: {enable: true}\nother: {cache-size: 12, listen: localhost}\n')
 
+    def test_no_default_selected_injection(self):
+        """回归防护（26.11.19 实机事故）：不得再向任何组注入 default-selected。
+
+        旧 US_FIRST 逻辑给所有含「美国策略」的 select 组写 default-selected，
+        连「国内流量」也被改到美国节点，国内站点全部反向代理回源（TTFB 3~6s、
+        淘宝整页 11s，DNS 因 respect-rules 一起变慢）。该逻辑已由 0ad3269 整段
+        移除，本断言防止其被重新引入。
+        """
+        text = TARGET.read_text(encoding="utf-8")
+        self.assertNotIn("default-selected", text)
+
+    def test_domestic_group_not_hijacked(self):
+        """功能验证：跑完 overwrite 后国内流量组不得被写上 default-selected。"""
+        if not shutil.which("ruby"):
+            self.skipTest("requires ruby")
+        try:
+            import yaml
+        except ImportError:  # pragma: no cover
+            self.skipTest("PyYAML not installed")
+        config = (
+            "proxy-groups:\n"
+            "  - {name: 默认代理, type: select, proxies: [香港策略, 美国策略, 直接连接]}\n"
+            "  - {name: 国内流量, type: select, proxies: [直接连接, 美国策略]}\n"
+            "  - {name: 国外流量, type: select, proxies: [美国策略, 直接连接]}\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "config.yaml"
+            config_path.write_text(config, encoding="utf-8")
+            helper = root / "ruby.sh"
+            helper.write_text("ruby_edit() { :; }\n", encoding="utf-8")
+            script = root / "hook.sh"
+            source = TARGET.read_text(encoding="utf-8")
+            source = source.replace("/usr/share/openclash/ruby.sh",
+                                    shlex.quote(helper.as_posix()))
+            script.write_text(source, encoding="utf-8")
+            result = subprocess.run(
+                [shutil.which("sh"), script.as_posix(), config_path.as_posix()],
+                capture_output=True, timeout=20,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            groups = {g["name"]: g for g in data["proxy-groups"]}
+            self.assertNotIn("default-selected", groups["国内流量"])
+            self.assertNotIn("default-selected", groups["国外流量"])
+
 
 if __name__ == "__main__":
     unittest.main()

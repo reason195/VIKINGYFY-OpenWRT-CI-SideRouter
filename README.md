@@ -12,7 +12,7 @@
 
 > ⚠️ 新仓库首次构建前必须重配 Secrets，缺失会直接终止构建：
 > `ROUTER_ROOT_PASSWORD`、`HP_ADDRESS`、`HP_UUID`、`MAIN_AIRPORT_SUB`、`BACKUP_AIRPORT_SUB`。
-> 可选：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`SINGBOX_SS_PASSWORD`；`PPPOE_USERNAME`/`PPPOE_PASSWORD` 旁路由已不拨号，降为可选、可不配置。
+> 可选：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`、`SINGBOX_SS_PASSWORD`、`TAILSCALE_AUTHKEY`；`PPPOE_USERNAME`/`PPPOE_PASSWORD` 旁路由已不拨号，降为可选、可不配置。
 > GitHub API 读不到 secret 的**值**，跨仓库无法自动搬运，只能手动重设一遍。
 
 ## 旁路由形态说明
@@ -28,7 +28,9 @@
 | DDNS + 证书 | **整体移除**：`/etc/config/ddns`、`/etc/config/acme`、`Files/usr/lib/acme/`（vendored dns_duckdns 插件）、`cert_check.sh` 与相关包全删。旁路由不是边缘设备，既取不到公网地址，也没有对外服务的域名 |
 | 防火墙 | 清除引用已删除接口的 `wan` 区域与 `Allow-WAN-*-v6` 规则（残留会让 fw4 整表加载失败）；保留硬件流卸载；`rp_filter=0` 放行同口非对称转发。FullCone 已随 NAT 角色一起移除 |
 
-外部访问：本固件不再有 DDNS 与 Let's Encrypt 证书链，管理入口就是 `http://192.168.1.2`（`redirect_https` 已强制关闭——没有可信证书时跳转只会 `ERR_CERT_AUTHORITY_INVALID`）。若仍要从外网进管理页，得自己补齐三件事：① 由主路由或别处把域名解析到你的入口地址；② 在主路由做端口转发到 `192.168.1.2:80`——**只有 80 可用**，26.11.06 实机测过 `uhttpd.main` 仅有 `listen_http='0.0.0.0:80' '[::]:80'`，443 并没有监听（`listen_https` 沿用软件包默认即为空；`/etc/uhttpd.crt` 虽在但没被使用），要 443 得自己 `uci add_list uhttpd.main.listen_https=...` 并承担自签告警；③ 想要可信证书需另找方案（反向代理或内网穿透自带 TLS）。
+外部访问：**首选 Tailscale 子网路由**（26.11.19 起内置）。固件带 `/etc/init.d/tailscaled` 与 `/usr/share/buffy/tailscale_bootstrap.sh`（cron 每 10 分钟幂等补齐），官方静态二进制放 `/overlay/tailscale`（不进 squashfs；`sysupgrade -n` 清空后自动重下）。配置可选 Secret `TAILSCALE_AUTHKEY`（建议在 Tailscale 后台建 Reusable + Ephemeral 密钥）后，刷机即自动上线并宣告 `192.168.1.0/24`，再到管理页批准一次子网路由即可；手机/电脑装客户端登录同一账号后，外网可直接 `ssh root@192.168.1.2`、访问 `http://192.168.1.1` / `http://192.168.1.2` 与 LAN 内任何服务——不依赖公网 IPv4（本线路是 CGNAT）、不开 IPv6、不动代理架构，`--accept-dns=false` 保证 DNS 仍走 dnsmasq → OpenClash 分流。未配置密钥时只装不登录，需手动 `tailscale up` 走网页授权（每次刷机都要重来一次）。
+
+传统做法（DDNS + 端口转发）在本仓库已整体移除：本固件没有 DDNS 与 Let's Encrypt 证书链，管理入口就是 `http://192.168.1.2`（`redirect_https` 已强制关闭——没有可信证书时跳转只会 `ERR_CERT_AUTHORITY_INVALID`）。若坚持端口转发，得自己补齐三件事：① 由主路由或别处把域名解析到你的入口地址；② 在主路由做端口转发到 `192.168.1.2:80`——**只有 80 可用**，26.11.06 实机测过 `uhttpd.main` 仅有 `listen_http='0.0.0.0:80' '[::]:80'`，443 并没有监听（`listen_https` 沿用软件包默认即为空；`/etc/uhttpd.crt` 虽在但没被使用），要 443 得自己 `uci add_list uhttpd.main.listen_https=...` 并承担自签告警；③ 想要可信证书需另找方案（反向代理或内网穿透自带 TLS）。
 
 ### 旁路由下已移除的软件包
 
@@ -62,6 +64,7 @@
 | `ROUTER_ROOT_PASSWORD` | `/etc/shadow`（SHA-256 crypt 哈希） |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | `/etc/buffy-notify.conf`（告警，可选） |
 | `SINGBOX_SS_PASSWORD` | `/etc/sing-box/config.json`（Shadowsocks 入站，可选） |
+| `TAILSCALE_AUTHKEY` | `Files/usr/share/buffy/tailscale_bootstrap.sh`（Tailscale 预认证密钥，可选） |
 
 必需 secret 缺失会终止构建；可选 secret 缺失只置空占位符、不阻断构建。
 

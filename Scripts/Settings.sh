@@ -165,6 +165,10 @@ inject_secret "TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN" 0
 inject_secret "TELEGRAM_CHAT_ID" "$TELEGRAM_CHAT_ID" 0
 # sing-box 入站密钥（可选）：缺失时置空，Shadowsocks 入站失效（不再烧入明文密钥）
 inject_secret "SINGBOX_SS_PASSWORD" "$SINGBOX_SS_PASSWORD" 0
+# Tailscale 预认证密钥（可选）：刷机后由 tailscale_bootstrap.sh 自动 `tailscale up`
+# 并宣告 192.168.1.0/24 子网路由；缺失时置空，只装不登录（需手动网页授权一次）。
+# 建议在 Tailscale 后台建 Reusable + Ephemeral 的 auth key，换机/重刷都不会失效。
+inject_secret "TAILSCALE_AUTHKEY" "$TAILSCALE_AUTHKEY" 0
 
 #root 密码：生成 crypt 哈希写入 shadow（与 OpenWrt 默认 $5$ 格式一致）
 if [ -n "$ROUTER_ROOT_PASSWORD" ]; then
