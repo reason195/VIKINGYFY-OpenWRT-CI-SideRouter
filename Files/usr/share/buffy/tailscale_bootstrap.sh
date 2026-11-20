@@ -85,7 +85,9 @@ if ! pidof tailscaled >/dev/null 2>&1; then
 fi
 
 # ---- 3. 登录（仅当注入了预认证密钥）----
-if ts status --json 2>/dev/null | grep -q '"BackendState":"Running"'; then
+# 注意 JSON 里冒号后有空格（"BackendState": "Running"），模式必须容忍空白，
+# 否则每轮 cron 都误判未登录、反复 tailscale up（26.11.20 实机日志每 10 分钟一次）。
+if ts status --json 2>/dev/null | grep -qE '"BackendState":[[:space:]]*"Running"'; then
 	exit 0
 fi
 if [ -z "$TS_AUTHKEY" ]; then

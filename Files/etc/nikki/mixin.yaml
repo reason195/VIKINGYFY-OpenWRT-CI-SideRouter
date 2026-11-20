@@ -1,0 +1,23 @@
+# nikki mixin：国内直连 + 本地直连（26.11.20 补）
+#
+# nikki-rules 会被前置到订阅配置的 rules 之前（/etc/init.d/nikki 的 yq 合并：
+# .rules = .nikki-rules + .rules）。订阅本身只有 MATCH,PROXY，不加这些则国内
+# 流量全部走代理（26.11.20 实测国内 TTFB 1s+，淘宝 1.27s）。
+#
+# 生效前提：uci nikki.mixin.mixin_file_content='1'（本仓库出厂已置 1）。
+# fake-ip 白名单在 uci 的 fake_ip_filters（geosite:cn / geosite:private），
+# 国内域名拿真实 IP，避免 fake-ip 下每条连接都要核心再解析一次。
+#
+# 注意：nikki 出厂 enabled='0'，主代理栈是 OpenClash；两者端口重叠不能同开。
+nikki-rules:
+  # 本地/局域网直连
+  - DOMAIN-SUFFIX,lan,DIRECT
+  - DOMAIN-SUFFIX,local,DIRECT
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  # 国内域名/IP 直连（geosite/geoip 数据由 mihomo 首次使用时自动下载）
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT,no-resolve

@@ -30,7 +30,32 @@
 
 外部访问：**首选 Tailscale 子网路由**（26.11.19 起内置）。固件带 `/etc/init.d/tailscaled` 与 `/usr/share/buffy/tailscale_bootstrap.sh`（cron 每 10 分钟幂等补齐），官方静态二进制放 `/overlay/tailscale`（不进 squashfs；`sysupgrade -n` 清空后自动重下）。配置可选 Secret `TAILSCALE_AUTHKEY`（建议在 Tailscale 后台建 Reusable + Ephemeral 密钥）后，刷机即自动上线并宣告 `192.168.1.0/24`，再到管理页批准一次子网路由即可；手机/电脑装客户端登录同一账号后，外网可直接 `ssh root@192.168.1.2`、访问 `http://192.168.1.1` / `http://192.168.1.2` 与 LAN 内任何服务——不依赖公网 IPv4（本线路是 CGNAT）、不开 IPv6、不动代理架构，`--accept-dns=false` 保证 DNS 仍走 dnsmasq → OpenClash 分流。未配置密钥时只装不登录，需手动 `tailscale up` 走网页授权（每次刷机都要重来一次）。
 
-传统做法（DDNS + 端口转发）在本仓库已整体移除：本固件没有 DDNS 与 Let's Encrypt 证书链，管理入口就是 `http://192.168.1.2`（`redirect_https` 已强制关闭——没有可信证书时跳转只会 `ERR_CERT_AUTHORITY_INVALID`）。若坚持端口转发，得自己补齐三件事：① 由主路由或别处把域名解析到你的入口地址；② 在主路由做端口转发到 `192.168.1.2:80`——**只有 80 可用**，26.11.06 实机测过 `uhttpd.main` 仅有 `listen_http='0.0.0.0:80' '[::]:80'`，443 并没有监听（`listen_https` 沿用软件包默认即为空；`/etc/uhttpd.crt` 虽在但没被使用），要 443 得自己 `uci add_list uhttpd.main.listen_https=...` 并承担自签告警；③ 想要可信证书需另找方案（反向代理或内网穿透自带 TLS）。
+### Tailscale 免批准（刷机后零操作）
+
+子网路由是**按节点批准**的：`sysupgrade -n` 清空 /overlay 后重新登录会生成新节点，默认要再去管理页批准一次 `192.168.1.0/24`。用「带 tag 的 auth key + ACL autoApprovers」可以免掉这一步：
+
+1. 管理页 → **Access Controls**，在现有 ACL 里**合并**（不是替换）以下两段：
+
+   ```json
+   {
+     "tagOwners": {
+       "tag:router": ["autogroup:admin"]
+     },
+     "autoApprovers": {
+       "routes": {
+         "192.168.1.0/24": ["tag:router"]
+       }
+     }
+   }
+   ```
+
+2. **Settings → Keys → Generate auth key**：勾选 **Reusable** + **Ephemeral**，并加上 tag `tag:router`。
+   - Ephemeral：节点离线后自动删除，避免每次刷机堆积 `owrt-1`/`owrt-2` 这类重名节点。
+3. 把新密钥更新到仓库 Secret `TAILSCALE_AUTHKEY`。下次刷机 bootstrap 用它登录，节点自带 tag，路由由 `autoApprovers` 自动批准，无需人工点击。
+
+当前节点若已用无 tag 的密钥登录，需等下次刷机（或手动 `tailscale up --authkey=<新密钥> --force-reauth`）才会带上 tag。
+
+本固件没有 DDNS 与 Let's Encrypt 证书链，管理入口就是 `http://192.168.1.2`（`redirect_https` 已强制关闭——没有可信证书时跳转只会 `ERR_CERT_AUTHORITY_INVALID`）。若坚持端口转发，得自己补齐三件事：① 由主路由或别处把域名解析到你的入口地址；② 在主路由做端口转发到 `192.168.1.2:80`——**只有 80 可用**，26.11.06 实机测过 `uhttpd.main` 仅有 `listen_http='0.0.0.0:80' '[::]:80'`，443 并没有监听（`listen_https` 沿用软件包默认即为空；`/etc/uhttpd.crt` 虽在但没被使用），要 443 得自己 `uci add_list uhttpd.main.listen_https=...` 并承担自签告警；③ 想要可信证书需另找方案（反向代理或内网穿透自带 TLS）。
 
 ### 旁路由下已移除的软件包
 

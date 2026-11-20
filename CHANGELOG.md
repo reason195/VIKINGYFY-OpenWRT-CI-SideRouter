@@ -1,3 +1,26 @@
+# 变更记录（2026-11-20）：刷机后代理栈被 nikki 抢占的修复 + nikki 国内直连补齐
+
+**现象**：10:07 自动升级到 `26.11.20-08.17.31` 后，国内站点 TTFB 回到 1s+（淘宝 1.27s、QQ 1.13s），而前一日修好后是 0.07~0.25s。排查发现 **OpenClash 根本没在跑**：`/etc/init.d/openclash status` = inactive，日志 `Core Initial Configuration Timeout` 后自停；实际监听 9090/7890/7891/7892 的是 **nikki 的 mihomo**。
+
+**根因**：`cf0455d` 把实机 nikki 配置作为出厂文件，`enabled='1'` 且 mixin 端口与 OpenClash 完全重叠。开机 nikki 先起占住端口，OpenClash 核心初始化超时自停。而 nikki 的订阅配置只有一条 `MATCH,PROXY`、`fake_ip_filter='0'`，于是**国内流量也全部走美国节点**。
+
+## 改动
+
+- `Files/etc/config/nikki`：`enabled` 1 → **0**（主代理栈是 OpenClash，两者端口重叠不能同开，注释写明切换方法）；`mixin_file_content` 0 → 1；`fake_ip_filter` 0 → 1，`fake_ip_filters` 增加 `geosite:private`、`geosite:cn`（国内域名拿真实 IP）。
+- 新增 `Files/etc/nikki/mixin.yaml`：`nikki-rules` 前置本地/局域网直连 + `GEOSITE,cn,DIRECT` + `GEOIP,CN,DIRECT,no-resolve`，排在订阅的 `MATCH,PROXY` 之前。nikki 的合并逻辑是 `.rules = .nikki-rules + .rules`，已用 yq 离线合并验证规则顺序正确。
+- `Files/usr/share/buffy/tailscale_bootstrap.sh`：登录态判断 `grep '"BackendState":"Running"'` → `grep -E '"BackendState":[[:space:]]*"Running"'`。实际 JSON 冒号后有空格，原模式永不匹配，导致每 10 分钟误判未登录、反复 `tailscale up`（实机日志 12:10/12:20/12:30 各一次）。
+
+## 实测（2026-11-20，192.168.1.2）
+
+- 停 nikki + 起 OpenClash 后：淘宝 0.09s、QQ 0.15s、B 站 0.25s、京东 0.08s；Google 0.71s、YouTube 1.24s；DNS baidu/taobao 返回真实 IP、google 返回 fake-ip；`/proxies` 国内流量 `now=直接连接`。
+- nikki mixin 合并验证（不落盘）：10 条直连规则正确前置到 `MATCH,PROXY` 之前；`yq` 语法校验通过。
+- Tailscale：authkey 注入成功、刷机后自动登录（新节点 `owrt-1` / 100.113.198.59），`AdvertiseRoutes=["192.168.1.0/24"]` 已宣告，LAN→tailnet ping 1.5ms；修复登录态判断后再跑 bootstrap 不再重复登录。
+
+## 注意
+
+- **子网路由按节点批准**：每次 `sysupgrade -n` 清空 /overlay 后重新登录会生成新节点，需在管理页重新批准一次。要免这一步，用带 tag 的 auth key + ACL `autoApprovers`（见 README「Tailscale 免批准」）。
+- 切换代理栈时务必先停另一个：`/etc/init.d/nikki stop && /etc/init.d/nikki disable` 再起 OpenClash，反之亦然。
+
 # 变更记录（2026-11-19）：补传 TAILSCALE_AUTHKEY 到可复用 workflow + 占位符接线回归测试
 
 **现象**：`TAILSCALE_AUTHKEY` 已在 21:53 配置到仓库 Secrets（早于 22:18 的手动构建），但构建日志仍打印 `WARN: 未配置可选 Secret TAILSCALE_AUTHKEY，占位符置空` + `blanked TAILSCALE_AUTHKEY`——固件里的引导脚本拿到空密钥，刷机后 Tailscale 不会自动登录。构建本身 success，无任何报错。

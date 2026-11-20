@@ -2,7 +2,11 @@
 config status 'status'
 
 config config 'config'
-	option enabled '1'
+	# 默认关闭：本机主代理栈是 OpenClash，nikki 的 mixin 端口（9090/7890/7891/7892）
+	# 与 OpenClash 完全重叠，同时开启会抢端口——26.11.20 刷机后 nikki 先起，OpenClash
+	# 报 Core Initial Configuration Timeout 自停，全网流量落到 nikki 的 MATCH,PROXY
+	# 上（国内也走美国节点，TTFB 1s+）。要用 nikki 时先关 OpenClash 再开本开关。
+	option enabled '0'
 	option profile 'subscription:subscription'
 	option start_delay '0'
 	option scheduled_restart '1'
@@ -59,9 +63,11 @@ config mixin 'mixin'
 	option dns_ipv6 '1'
 	option dns_mode 'fake-ip'
 	option fake_ip_range '198.18.0.1/16'
-	option fake_ip_filter '0'
+	option fake_ip_filter '1'
 	list fake_ip_filters '+.lan'
 	list fake_ip_filters '+.local'
+	list fake_ip_filters 'geosite:private'
+	list fake_ip_filters 'geosite:cn'
 	option fake_ip_cache '1'
 	option hosts '0'
 	option dns_nameserver '0'
@@ -73,7 +79,7 @@ config mixin 'mixin'
 	option sniffer_sniff '0'
 	option rule '0'
 	option rule_provider '0'
-	option mixin_file_content '0'
+	option mixin_file_content '1'
 	option api_secret '760640'
 
 config authentication
