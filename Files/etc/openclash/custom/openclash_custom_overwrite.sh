@@ -28,7 +28,7 @@ ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e '
   default = groups.find { |g| g.is_a?(Hash) && g["name"] == "默认代理" }
   exit 0 unless default && default["proxies"].is_a?(Array)
 
-  members = default["proxies"].reject { |name| ["自动选择", "直接连接"].include?(name) }
+  members = default["proxies"].reject { |name| ["自动选择", "直接连接", "美国优先"].include?(name) }
   exit 0 if members.empty?
 
   filter = "^(?!.*(DIRECT|REJECT|直接连接|群|邀请|返利|循环|官网|客服|网站|网址|获取|订阅|流量|到期|机场|下次|版本|官址|备用|过期|已用|联系|邮箱|工单|贩卖|通知|倒卖|防止|国内|地址|频道|无法|说明|使用|提示|特别|访问|支持|教程|关注|更新|作者|加入|USE|USED|TOTAL|EXPIRE|EMAIL|Panel|Channel|Author))"
@@ -48,8 +48,35 @@ ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e '
   auto["filter"] = filter
   auto.delete("proxies")
 
+  # 美国优先：fallback(美国自动 → 自动选择)。
+  # 默认代理首项指向它，效果是「优先走美国、美国全挂自动回退全球最快」。
+  # 不能直接把「美国策略」放进 fallback：它是 select 组，Alive() 恒为 true，
+  # fallback 永远认为它可用，节点挂了也不会切（26.11.08 实测过同类陷阱）。
+  us_auto = groups.find { |g| g.is_a?(Hash) && g["name"] == "美国自动" }
+  if us_auto
+    us_first = groups.find { |g| g.is_a?(Hash) && g["name"] == "美国优先" }
+    unless us_first
+      us_first = {
+        "name" => "美国优先",
+        "icon" => "https://github.com/Koolson/Qure/raw/master/IconSet/Color/United_States.png"
+      }
+      groups.unshift(us_first)
+    end
+    us_first["type"] = "fallback"
+    us_first["proxies"] = ["美国自动", "自动选择"]
+    us_first["url"] = "https://www.google.com/generate_204"
+    us_first["interval"] = 300
+    us_first["tolerance"] = 50
+    us_first["timeout"] = 5000
+    us_first.delete("include-all")
+    us_first.delete("filter")
+    first = "美国优先"
+  else
+    first = "自动选择"
+  end
+
   tail = default["proxies"].include?("直接连接") ? ["直接连接"] : []
-  default["proxies"] = ["自动选择"] + members + tail
+  default["proxies"] = [first] + members + ["自动选择"] + tail
 
   YAML.dump(data, path)
 ' "$CONFIG_FILE" 2>/dev/null || true
