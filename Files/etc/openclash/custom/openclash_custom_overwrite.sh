@@ -54,4 +54,28 @@ ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e '
   YAML.dump(data, path)
 ' "$CONFIG_FILE" 2>/dev/null || true
 
+# Tailscale 控制面/中继域名必须拿到真实 IP 且直连：
+# fake-ip 模式会把 controlplane/log/derp*.tailscale.com 解析成 198.18.x，
+# tailscaled 连的是 fake-ip 地址，表现为 "dial ... i/o timeout" 后卡在
+# doLogin，节点显示 NoState 或在线但接口无地址。缺这条时刷机后 tailscale
+# 必然起不来（26.11.22 实测：log.tailscale.com → 198.18.0.53，30s 超时）。
+ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e '
+  path = ARGV[0]
+  data = YAML.load_file(path)
+  dns = data["dns"]
+  if dns.is_a?(Hash)
+    filter = (dns["fake-ip-filter"] ||= [])
+    %w[+.tailscale.com +.tailscale.io +.tailscale.net].each do |d|
+      filter << d unless filter.include?(d)
+    end
+  end
+  rules = data["rules"]
+  if rules.is_a?(Array)
+    %w[DOMAIN-SUFFIX,tailscale.com DOMAIN-SUFFIX,tailscale.io DOMAIN-SUFFIX,tailscale.net].reverse_each do |r|
+      rules.unshift("#{r},DIRECT") unless rules.any? { |x| x.to_s.start_with?(r) }
+    end
+  end
+  YAML.dump(data, path)
+' "$CONFIG_FILE" 2>/dev/null || true
+
 exit 0
