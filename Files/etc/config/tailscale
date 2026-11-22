@@ -1,0 +1,20 @@
+
+# Tailscale（官方包 + luci-app-tailscale-community 面板，管理页在 LuCI「系统→Tailscale」）
+# 26.11.22 从自建静态二进制方案切换到面板方案：面板原生支持 authkey / advertise_routes /
+# accept_dns，自动化（刷机自动登录、宣告子网路由）可完整保留。
+config tailscale 'settings'
+	option enabled '1'
+	option port '41641'
+	option config_path '/etc/tailscale'
+	option fw_mode 'nftables'
+	option log_stdout '1'
+	option log_stderr '1'
+	# 不接管 DNS：旁路由 DNS 架构是 dnsmasq → OpenClash(127.0.0.1#7874)、fake-ip 分流，
+	# 若接受 Tailscale 的 DNS（100.100.100.100）会摧毁分流，故必须 0。
+	option accept_dns '0'
+	# 宣告整个 LAN 段，外网客户端可直接访问 192.168.1.0/24
+	list advertise_routes '192.168.1.0/24'
+	# 预认证密钥由 CI 从 GitHub Secret TAILSCALE_AUTHKEY 注入（@@ 占位符见 Settings.sh）。
+	# 用 Reusable + Ephemeral 密钥；每次刷机自动登录，节点自带 tag 时路由可由
+	# ACL autoApprovers 自动批准（见 README「Tailscale 免批准」）。
+	option authkey '@@TAILSCALE_AUTHKEY@@'

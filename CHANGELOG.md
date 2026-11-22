@@ -1,3 +1,28 @@
+# 变更记录（2026-11-22）：Tailscale 切换到官方包 + LuCI 面板（有 Web 管理页）
+
+**背景**：先前用「官方静态二进制放 /overlay + 自建 init/bootstrap + cron」方案，能用但没有 Web 面板，管理要去云端 admin。仓库其实一直在 `Packages.sh` 拉 `asvow/luci-app-tailscale`（社区面板），只是 `GENERAL.txt` 没选中。用户要面板，故切换。
+
+**关键**：社区面板（asvow/luci-app-tailscale）原生支持 `authkey` / `advertise_routes` / `accept_dns`，刷机自动登录的子网路由自动化**可以完整保留**，不是二选一。
+
+## 改动
+
+- `Config/GENERAL.txt`：新增 `CONFIG_PACKAGE_tailscale=y`、`CONFIG_PACKAGE_luci-app-tailscale-community=y`、`CONFIG_PACKAGE_luci-i18n-tailscale-community-zh-cn=y`。管理页在 LuCI「系统 → Tailscale」。
+- 新增 `Files/etc/config/tailscale`（面板 UCI）：`enabled=1`、`accept_dns=0`（保护 dnsmasq→OpenClash fake-ip 分流）、`list advertise_routes=192.168.1.0/24`、`option authkey=@@TAILSCALE_AUTHKEY@@`（CI 从 Secret 注入，保留刷机自动登录）。
+- **删除**自建方案：`Files/etc/init.d/tailscaled`、`Files/usr/share/buffy/tailscale_bootstrap.sh`、`Files/etc/crontabs/root` 的 `*/10` bootstrap 行。
+- `Files/etc/uci-defaults/92-buffy-firewall.sh`：**移除**自建的 tailscale zone + 双向 forwarding（面板/tailscaled 通过 `fw_mode=nftables` 自管防火墙，两套并存会冲突）。
+- `Tests/test_side_router_firewall.sh`：用例 1~4 恢复「仅 lan」，用例 8 改为断言「不再自建 tailscale zone」。
+- `README.md`：外部访问段改为面板方案，注明两套方案互斥。
+
+## 验证
+
+- 防火墙 37 passed / 0 failed；Python 16 项（含 secret 四层接线、nikki 出厂、overwrite）通过。
+- 面板 UCI 字段对照 asvow/luci-app-tailscale 源码确认：`accept_dns=0` → `--accept-dns=false`、`advertise_routes` → `--advertise-routes=...`、`authkey` → `--authkey=...`，与自建方案参数等价。
+
+## 注意
+
+- 这套方案需重新构建固件才生效（当前实机仍是旧的静态二进制方案）。
+- 刷机后外网访问的流程不变：authkey 自动登录 + 宣告路由，若节点无 tag 仍需管理页批准一次子网路由（tag + autoApprovers 可免，见 README）。
+
 # 变更记录（2026-11-20）：刷机后代理栈被 nikki 抢占的修复 + nikki 国内直连补齐
 
 **现象**：10:07 自动升级到 `26.11.20-08.17.31` 后，国内站点 TTFB 回到 1s+（淘宝 1.27s、QQ 1.13s），而前一日修好后是 0.07~0.25s。排查发现 **OpenClash 根本没在跑**：`/etc/init.d/openclash status` = inactive，日志 `Core Initial Configuration Timeout` 后自停；实际监听 9090/7890/7891/7892 的是 **nikki 的 mihomo**。

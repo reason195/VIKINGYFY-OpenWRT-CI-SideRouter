@@ -28,7 +28,9 @@
 | DDNS + 证书 | **整体移除**：`/etc/config/ddns`、`/etc/config/acme`、`Files/usr/lib/acme/`（vendored dns_duckdns 插件）、`cert_check.sh` 与相关包全删。旁路由不是边缘设备，既取不到公网地址，也没有对外服务的域名 |
 | 防火墙 | 清除引用已删除接口的 `wan` 区域与 `Allow-WAN-*-v6` 规则（残留会让 fw4 整表加载失败）；保留硬件流卸载；`rp_filter=0` 放行同口非对称转发。FullCone 已随 NAT 角色一起移除 |
 
-外部访问：**首选 Tailscale 子网路由**（26.11.19 起内置）。固件带 `/etc/init.d/tailscaled` 与 `/usr/share/buffy/tailscale_bootstrap.sh`（cron 每 10 分钟幂等补齐），官方静态二进制放 `/overlay/tailscale`（不进 squashfs；`sysupgrade -n` 清空后自动重下）。配置可选 Secret `TAILSCALE_AUTHKEY`（建议在 Tailscale 后台建 Reusable + Ephemeral 密钥）后，刷机即自动上线并宣告 `192.168.1.0/24`，再到管理页批准一次子网路由即可；手机/电脑装客户端登录同一账号后，外网可直接 `ssh root@192.168.1.2`、访问 `http://192.168.1.1` / `http://192.168.1.2` 与 LAN 内任何服务——不依赖公网 IPv4（本线路是 CGNAT）、不开 IPv6、不动代理架构，`--accept-dns=false` 保证 DNS 仍走 dnsmasq → OpenClash 分流。未配置密钥时只装不登录，需手动 `tailscale up` 走网页授权（每次刷机都要重来一次）。
+外部访问：**首选 Tailscale 子网路由**（26.11.22 起改为**官方包 + LuCI 面板**方案）。固件编译包含 `tailscale` + `luci-app-tailscale-community` + 中文包，管理页在 LuCI **「系统 → Tailscale」**，可在网页上看状态、登录、开关子网路由、改参数。配置在 `/etc/config/tailscale`（`Files/etc/config/tailscale`）：`enabled=1`、`accept_dns=0`（保护 clash 的 fake-ip 分流）、`advertise_routes=192.168.1.0/24`、`authkey` 由 Secret `TAILSCALE_AUTHKEY` 注入——所以刷机仍自动登录，自动化不丢。手机/电脑装客户端登录同一账号后，外网可直接 `ssh root@192.168.1.2`、访问 `http://192.168.1.1` / `http://192.168.1.2` 与 LAN 内任何服务——不依赖公网 IPv4（本线路是 CGNAT）、不开 IPv6，`accept_dns=0` 保证 DNS 仍走 dnsmasq → OpenClash 分流。
+
+> 历史：26.11.19~21 用的是「官方静态二进制放 /overlay + 自建 init/bootstrap」方案，26.11.22 切换到面板方案后已移除自建的 `/etc/init.d/tailscaled`、`tailscale_bootstrap.sh` 与对应 cron；防火墙也不再自建 tailscale zone（面板/tailscaled 通过 nftables 自管）。两套方案互斥，不要同时存在。
 
 ### Tailscale 免批准（刷机后零操作）
 
@@ -89,7 +91,7 @@
 | `ROUTER_ROOT_PASSWORD` | `/etc/shadow`（SHA-256 crypt 哈希） |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | `/etc/buffy-notify.conf`（告警，可选） |
 | `SINGBOX_SS_PASSWORD` | `/etc/sing-box/config.json`（Shadowsocks 入站，可选） |
-| `TAILSCALE_AUTHKEY` | `Files/usr/share/buffy/tailscale_bootstrap.sh`（Tailscale 预认证密钥，可选） |
+| `TAILSCALE_AUTHKEY` | `Files/etc/config/tailscale`（面板 UCI 的 authkey，刷机自动登录） |
 
 必需 secret 缺失会终止构建；可选 secret 缺失只置空占位符、不阻断构建。
 
