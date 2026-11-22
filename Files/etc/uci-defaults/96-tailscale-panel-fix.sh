@@ -35,4 +35,13 @@ if [ -z "$(uci -q get firewall.ts_snat)" ]; then
 	uci commit firewall
 fi
 
+# 4) 面板「Logs」页读不出内容：log.js 先 fs.stat('/sbin/logread') 探测路径，
+#    但包自带的 ACL 只给了 `logread -e tailscale` 的 exec 权限，没有 stat/read，
+#    探测返回 null → logger 为 null → 页面空白。补一条 read 权限。
+ACL=/usr/share/rpcd/acl.d/luci-app-tailscale.json
+if [ -f "$ACL" ] && ! grep -q '"/sbin/logread"' "$ACL"; then
+	sed -i 's#^	*"/sbin/logread -e tailscale"#				"/sbin/logread": [ "read" ],\n&#' "$ACL"
+	/etc/init.d/rpcd restart
+fi
+
 exit 0

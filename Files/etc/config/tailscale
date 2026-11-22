@@ -14,6 +14,9 @@ config tailscale 'settings'
 	option accept_dns '0'
 	# 宣告整个 LAN 段，外网客户端可直接访问 192.168.1.0/24
 	list advertise_routes '192.168.1.0/24'
+	# 节点名固定为 owrt（系统 hostname 是 OWRT，会被规范化；不显式指定时，
+	# 若 tailnet 里已有同名节点，Tailscale 会自动加 -1 后缀，表现为 owrt-1）。
+	option hostname 'owrt'
 	# 预认证密钥由 CI 从 GitHub Secret TAILSCALE_AUTHKEY 注入（占位符见 Settings.sh）。
 	# 用 Reusable + Ephemeral 密钥；每次刷机自动登录，节点自带 tag 时路由可由
 	# ACL autoApprovers 自动批准（见 README「Tailscale 免批准」）。
