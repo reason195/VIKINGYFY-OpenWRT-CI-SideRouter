@@ -65,7 +65,7 @@ ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e '
     us_first["type"] = "fallback"
     us_first["proxies"] = ["美国自动", "自动选择"]
     us_first["url"] = "https://www.google.com/generate_204"
-    us_first["interval"] = 300
+    us_first["interval"] = 60
     us_first["tolerance"] = 50
     us_first["timeout"] = 5000
     us_first.delete("include-all")
