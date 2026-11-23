@@ -173,8 +173,22 @@ GOT=$(sha256sum "$FW" | awk '{print $1}')
 log "sha256 校验通过：$GOT"
 
 if [ "${AUTO_UPGRADE_DRYRUN:-0}" = "1" ]; then
-	log "[dryrun] 将执行：sysupgrade $FLAG$FW（$MODE）"
+	if [ -n "$FLAG" ] && [ -s /etc/tailscale/tailscaled.state ]; then
+		log "[dryrun] 将打包 /etc/tailscale/tailscaled.state 并执行：sysupgrade -f /tmp/ts-state-backup.tar.gz $FW（$MODE）"
+	else
+		log "[dryrun] 将执行：sysupgrade $FLAG$FW（$MODE）"
+	fi
 	exit 0
+fi
+
+# 在重置配置升级（keep_config≠1）时，仅保留 Tailscale 节点身份状态，防止每次刷机重建节点变成 owrt-1
+TS_BACKUP="/tmp/ts-state-backup.tar.gz"
+rm -f "$TS_BACKUP"
+if [ -n "$FLAG" ] && [ -s /etc/tailscale/tailscaled.state ]; then
+	if tar -czf "$TS_BACKUP" -C / etc/tailscale/tailscaled.state 2>/dev/null && [ -s "$TS_BACKUP" ]; then
+		FLAG="-f $TS_BACKUP "
+		log "已打包 /etc/tailscale/tailscaled.state，升级时保留 Tailscale 节点身份"
+	fi
 fi
 
 notify "路由器自动升级开始" "$CUR -> $TAG（$MODE），即将重启，约 3 分钟恢复"

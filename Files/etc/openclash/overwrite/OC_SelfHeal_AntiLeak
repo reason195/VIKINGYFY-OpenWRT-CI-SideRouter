@@ -1,5 +1,5 @@
 #!NAME = OC_SelfHeal_AntiLeak
-#!DESC = 代理组 60s 健康检查 + 空组回退直连 + provider 每小时刷新 + 关闭 IPv6 DNS
+#!DESC = 代理组 180s 健康检查 + 空组回退直连 + provider 每小时刷新 + 关闭 IPv6 DNS
 #!CONFIG = all
 
 # 说明（16-overwrite-module-format.md §16.1/§16.2）：
@@ -24,7 +24,7 @@ proxy-providers*:
     health-check:
       enable: true
       url: 'https://cp.cloudflare.com/generate_204'
-      interval: 60
+      interval: 180
       timeout: 5000
       lazy: false
       expected-status: 204
@@ -33,7 +33,7 @@ proxy-providers*:
     type: '/^(url-test|fallback|load-balance)$/'
   set:
     lazy: false
-    interval: 60
+    interval: 180
     timeout: 5000
     expected-status: 204
     empty-fallback: DIRECT

@@ -6,7 +6,7 @@ CONFIG_FILE="$1"
 . /usr/share/openclash/ruby.sh
 
 # ruby_edit 的值按 Ruby 表达式执行，字符串必须自带引号。
-ruby_edit "$CONFIG_FILE" "['global-client-fingerprint']" '"chrome"'
+# 注：Mihomo 新版核心已移除 global-client-fingerprint，改为下方为各 proxy-provider 注入 override.client-fingerprint。
 # Ruby 4 的 INTEGER 节点不在插件白名单内；to_i 保持缓存大小为整数。
 ruby_edit "$CONFIG_FILE" "['dns']['cache-size']" '"4096".to_i'
 ruby_edit "$CONFIG_FILE" "['dns']['listen']" '"127.0.0.1:7874"'
@@ -22,6 +22,14 @@ ruby_edit "$CONFIG_FILE" "['dns']['listen']" '"127.0.0.1:7874"'
 ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e '
   path = ARGV[0]
   data = YAML.load_file(path)
+  data.delete("global-client-fingerprint")
+  if data["proxy-providers"].is_a?(Hash)
+    data["proxy-providers"].each_value do |p|
+      next unless p.is_a?(Hash)
+      p["override"] ||= {}
+      p["override"]["client-fingerprint"] ||= "chrome" if p["override"].is_a?(Hash)
+    end
+  end
   groups = data["proxy-groups"]
   exit 0 unless groups.is_a?(Array)
 

@@ -41,7 +41,7 @@ DIR=""
 [ -n "$DIR" ] || DIR=$(awk -F '=' '/^conf-dir=/ {print $2}' /tmp/etc/dnsmasq.conf.* 2>/dev/null | head -1)
 [ -n "$DIR" ] || DIR="/tmp/dnsmasq.d"
 mkdir -p "$DIR"
-printf 'server=223.5.5.5\nserver=119.29.29.29\nserver=2400:3200::1\n' > "$DIR/60-fallback.conf"
+printf 'server=223.5.5.5\nserver=119.29.29.29\n' > "$DIR/60-fallback.conf"
 chmod 644 "$DIR/60-fallback.conf"
 /etc/init.d/dnsmasq restart >/dev/null 2>&1
 

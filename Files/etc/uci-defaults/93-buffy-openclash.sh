@@ -150,7 +150,7 @@ unset _i _sec _u _p
 # 的**内部还原标记**，ipv6_dns=0 时它恒为 0，写 1 会让 revert_dnsmasq() 把 filter_aaaa
 # 还原成空值，反而放开 AAAA（26.11.14 刷机实测），因此这里不碰它。
 # 若以后要在旁路由上启用 IPv6，需同时改 ipv6_enable / ipv6_dns / filter_aaaa（指南 §9.5）。
-for _kv in ipv6_enable ipv6_dns append_wan_dns append_default_dns enable_redirect_dns store_fakeip; do
+for _kv in ipv6_enable ipv6_dns append_wan_dns append_default_dns enable_redirect_dns store_fakeip dnsmasq_noresolv; do
 	uci -q delete "openclash.config.$_kv"
 done
 uci set openclash.config.ipv6_enable='0'
@@ -159,6 +159,7 @@ uci set openclash.config.append_wan_dns='0'
 uci set openclash.config.append_default_dns='0'
 uci set openclash.config.enable_redirect_dns='1'
 uci set openclash.config.store_fakeip='1'
+uci set openclash.config.dnsmasq_noresolv='1'
 unset _kv
 
 # ── 登记内置覆写模块（幂等）────────────────────────────────────────
