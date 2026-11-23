@@ -18,6 +18,7 @@ config tailscale 'settings'
 	# 若 tailnet 里已有同名节点，Tailscale 会自动加 -1 后缀，表现为 owrt-1）。
 	option hostname 'owrt'
 	# 预认证密钥由 CI 从 GitHub Secret TAILSCALE_AUTHKEY 注入（占位符见 Settings.sh）。
-	# 用 Reusable + Ephemeral 密钥；每次刷机自动登录，节点自带 tag 时路由可由
-	# ACL autoApprovers 自动批准（见 README「Tailscale 免批准」）。
+	# 用 Reusable 密钥（不带 Ephemeral）：节点离线后保留，是永久节点。
+	# 注意：不带 tag 时 ACL autoApprovers 不生效，首次注册后子网路由需在管理页手动
+	# 批准一次（Approved 状态随节点身份保留，重启不会丢）。
 	option authkey '@@TAILSCALE_AUTHKEY@@'
