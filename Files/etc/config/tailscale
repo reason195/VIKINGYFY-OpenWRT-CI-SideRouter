@@ -19,6 +19,7 @@ config tailscale 'settings'
 	option hostname 'owrt'
 	# 预认证密钥由 CI 从 GitHub Secret TAILSCALE_AUTHKEY 注入（占位符见 Settings.sh）。
 	# 用 Reusable 密钥（不带 Ephemeral）：节点离线后保留，是永久节点。
-	# 注意：不带 tag 时 ACL autoApprovers 不生效，首次注册后子网路由需在管理页手动
-	# 批准一次（Approved 状态随节点身份保留，重启不会丢）。
+	# --advertise-tags 让节点注册时自动带 tag:router：ACL autoApprovers 据此自动
+	# 批准子网路由，且 tag 会禁用 node key expiry（节点永不过期）。
+	option flags '--advertise-tags=tag:router'
 	option authkey '@@TAILSCALE_AUTHKEY@@'
