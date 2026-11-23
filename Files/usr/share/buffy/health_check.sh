@@ -56,21 +56,19 @@ else
 	bad "DNS 解析失败 (223.5.5.5)"
 fi
 
-# ---- 2. dnsmasq 备用上游 ----
-# rc.local 写到生成的 dnsmasq conf 里的 conf-dir（本机为 /tmp/dnsmasq.<cfgid>.d，非 /tmp/dnsmasq.d），
-# 用 glob 兜底定位真实路径，避免按固定目录查漏报。
+# ---- 2. dnsmasq 上游防泄漏检查 ----
+# OpenClash 运行期间 dnsmasq 只能以 127.0.0.1#7874 为唯一上游；
+# 若 conf-dir 存在 60-fallback.conf（直连 223.5.5.5 等），客户端重传时会触发 DNS 泄漏。
 FALLBACK=""
 for f in /tmp/dnsmasq.*.d/60-fallback.conf /tmp/dnsmasq.d/60-fallback.conf /tmp/etc/dnsmasq.d/60-fallback.conf; do
 	[ -s "$f" ] && FALLBACK="$f" && break
 done
 if [ -n "$FALLBACK" ]; then
-	if grep -q '223.5.5.5' "$FALLBACK"; then
-		ok "dnsmasq 备用上游已部署 ($FALLBACK)"
-	else
-		bad "dnsmasq 备用上游内容异常"
-	fi
+	bad "dnsmasq 存在直连兜底上游 ($FALLBACK)，存在 DNS 泄漏风险"
+elif grep -q '^server=127.0.0.1#7874$' /tmp/etc/dnsmasq.conf.* 2>/dev/null; then
+	ok "dnsmasq 唯一上游已锁定为 127.0.0.1#7874（无外部直连兜底）"
 else
-	bad "dnsmasq 备用上游缺失 (conf-dir/60-fallback.conf)"
+	bad "dnsmasq 未指向 127.0.0.1#7874"
 fi
 
 if [ -n "$(pidof dnsmasq 2>/dev/null)" ]; then

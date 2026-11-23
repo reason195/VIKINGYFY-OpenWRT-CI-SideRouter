@@ -33,16 +33,14 @@ fi
 # syncdial fix: 确保 syncdial 配置文件存在，避免 ppp.sh 同步拨号时 uci 报错
 [ -s /etc/config/syncdial ] || { printf 'config syncdial %s\n\toption enabled %s\n' 'config' '0' > /etc/config/syncdial; }
 
-# dnsmasq 备用 DNS conf（/tmp 重启即清，每次启动重建；OpenClash 看门狗不管理此目录）
-# 注意：uci show dhcp 对匿名 dnsmasq section 打印为 dhcp.@dnsmasq[0]=dnsmasq，没有 .type='dnsmasq' 行，
-# 旧写法提取不到 cfgid 会把 conf 写到 /tmp/dnsmasq..d 导致备用上游从不生效。
-# 直接读 dnsmasq 启动时生成的 conf 里的 conf-dir=，不猜测匿名 section 的 cfgid。
-DIR=""
-[ -n "$DIR" ] || DIR=$(awk -F '=' '/^conf-dir=/ {print $2}' /tmp/etc/dnsmasq.conf.* 2>/dev/null | head -1)
+# dnsmasq 仅保留 OpenClash（127.0.0.1#7874）为唯一上游：
+# 若在 conf-dir 中常驻写入 223.5.5.5/119.29.29.29，即使开启 strictorder，
+# 客户端同域并发/重传查询时 dnsmasq 仍会跳过忙碌的 7874 转给公共 DNS，导致 DNS 泄漏
+# （26.11.24 实机 logread + bash.ws 实测证实）。旁路由自身已通过 /etc/config/network
+# 的 192.168.1.1 / 223.5.5.5 解析，无需 dnsmasq 兜底。
+DIR=$(awk -F '=' '/^conf-dir=/ {print $2}' /tmp/etc/dnsmasq.conf.* 2>/dev/null | head -1)
 [ -n "$DIR" ] || DIR="/tmp/dnsmasq.d"
-mkdir -p "$DIR"
-printf 'server=223.5.5.5\nserver=119.29.29.29\n' > "$DIR/60-fallback.conf"
-chmod 644 "$DIR/60-fallback.conf"
+rm -f "$DIR/60-fallback.conf"
 /etc/init.d/dnsmasq restart >/dev/null 2>&1
 
 # custom_fakeip_filter 自愈（防断网修复项）：订阅源/规则源等域名必须返回真实 IP。
