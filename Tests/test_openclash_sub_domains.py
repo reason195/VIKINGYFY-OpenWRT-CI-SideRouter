@@ -61,6 +61,23 @@ class SubscriptionDomainTest(unittest.TestCase):
             self.assertIn("+.tohno-0.top", text, path)
             self.assertIn("+.de5.net", text, path)
 
+    def test_google_play_policy_precedes_geosite_cn(self):
+        """Google Play 下载/跳转域名必须排在 geosite:cn 之前并走境外 DoH。"""
+        text = POLICY.read_text(encoding="utf-8")
+        cn_pos = text.index('"geosite:cn,private,apple":')
+        for domain in (
+            "+.services.googleapis.cn",
+            "+.googleapis.cn",
+            "+.xn--ngstr-lra8j.com",
+            "+.gvt1.com",
+            "dl.google.com",
+        ):
+            pos = text.index(domain)
+            self.assertLess(pos, cn_pos, f"{domain} 必须位于 geosite:cn 之前")
+        head = text[:cn_pos]
+        self.assertIn("https://dns.cloudflare.com/dns-query", head)
+        self.assertIn("https://dns.google/dns-query", head)
+
     def test_extracts_only_proxy_provider_hosts(self):
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)

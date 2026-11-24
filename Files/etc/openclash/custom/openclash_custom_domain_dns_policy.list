@@ -1,3 +1,9 @@
+# Google Play 下载/更新域名：必须排在 geosite:cn 之前，否则会被国内 DoH 解析成国内节点 IP
+# 并经 china_ip_route 绕过代理导致下载失败/超时（26.11.24 实机排障）。
+"+.services.googleapis.cn,+.googleapis.cn,+.xn--ngstr-lra8j.com,+.gvt1.com,dl.google.com":
+  - https://dns.cloudflare.com/dns-query
+  - https://dns.google/dns-query
+
 # OpenClash 自定义 nameserver-policy（需 openclash.config.custom_name_policy=1）
 # 目的：国外域名走 nameserver（经代理的境外 DoH），国内/私有/苹果域名走国内 DoH 直连，
 # 既消除 DNS 泄漏（权威侧不再看到国内 ISP 解析器），又保留国内 CDN 就近解析。
