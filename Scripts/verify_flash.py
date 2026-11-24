@@ -259,8 +259,12 @@ def check_openclash_runtime():
     # UCI config_path 指向订阅原稿；只有进程的 -f 才是经过覆写的运行配置。
     ruby = '''
 v = YAML.load_file(ARGV[0])
+# Mihomo 新版核心已移除顶层 global-client-fingerprint，改为各 proxy-provider 注入 override.client-fingerprint。
+providers = v['proxy-providers']
+bad_providers = providers.is_a?(Hash) ? providers.select { |_, p| p.is_a?(Hash) && p.dig('override', 'client-fingerprint') != 'chrome' }.keys : []
+fp_ok = !v.key?('global-client-fingerprint') && bad_providers.empty?
+puts(fp_ok ? 'PASS client-fingerprint' : "FAIL client-fingerprint: global=#{v['global-client-fingerprint'].inspect} bad_providers=#{bad_providers.inspect}")
 expected = [
-  [['global-client-fingerprint'], 'chrome'],
   [['dns', 'cache-size'], 4096],
   [['dns', 'listen'], '127.0.0.1:7874'],
   [['dns', 'respect-rules'], true],
@@ -290,11 +294,27 @@ covered = required_domains.select do |domain|
 end
 missing_policy = required_domains - covered
 puts(missing_policy.empty? ? 'PASS dns.nameserver-policy' : "FAIL dns.nameserver-policy: missing=#{missing_policy.inspect}")
-# 默认代理必须默认走「自动选择」fallback 组，否则香港全挂时整条链路停在不健康策略上。
+# Google Play 下载/跳转域名必须排在 geosite:cn 之前并走境外 DoH。
+policy_entries = policy.to_a
+cn_idx = policy_entries.index { |key, _| key.to_s.split(',').map(&:strip).include?('geosite:cn') }
+overseas_dns = ['https://dns.cloudflare.com/dns-query', 'https://dns.google/dns-query']
+gp_domains = ['+.googleapis.cn', '+.xn--ngstr-lra8j.com', '+.gvt1.com', 'dl.google.com']
+missing_gp = gp_domains.reject do |domain|
+  idx = policy_entries.index do |key, servers|
+    key.to_s.split(',').map(&:strip).include?(domain) && (Array(servers) & overseas_dns).any?
+  end
+  idx && (cn_idx.nil? || idx < cn_idx)
+end
+puts(missing_gp.empty? ? 'PASS dns.nameserver-policy.google-play' : "FAIL dns.nameserver-policy.google-play: missing_or_after_cn=#{missing_gp.inspect}")
+# 默认代理首项：存在「美国自动」时走「美国优先」fallback，否则回退「自动选择」。
 groups = Array(v['proxy-groups'])
 default = groups.find { |g| g.is_a?(Hash) && g['name'] == '默认代理' }
-default_auto = default && Array(default['proxies']).first == '自动选择'
-puts(default_auto ? 'PASS proxy-groups.default-auto' : "FAIL proxy-groups.default-auto: 默认代理首项应为自动选择，实得 #{default && Array(default['proxies']).first.inspect}")
+us_auto = groups.find { |g| g.is_a?(Hash) && g['name'] == '美国自动' }
+us_first = groups.find { |g| g.is_a?(Hash) && g['name'] == '美国优先' }
+expected_first = us_auto ? '美国优先' : '自动选择'
+default_ok = default && Array(default['proxies']).first == expected_first &&
+             (!us_auto || (us_first && us_first['type'] == 'fallback' && Array(us_first['proxies']) == ['美国自动', '自动选择']))
+puts(default_ok ? 'PASS proxy-groups.default-auto' : "FAIL proxy-groups.default-auto: 期望首项 #{expected_first}，实得 #{default && Array(default['proxies']).first.inspect}")
 auto = groups.find { |g| g.is_a?(Hash) && g['name'] == '自动选择' }
 auto_ok = auto && auto['type'] == 'url-test' && auto['include-all'] == true \
           && auto['filter'].to_s.include?('DIRECT') && auto['filter'].to_s.include?('REJECT')
@@ -304,7 +324,7 @@ puts 'CHECK_COMPLETE'
     out, error = run("ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e "
                      + shlex.quote(ruby) + " " + shlex.quote(config_path), timeout=30)
     lines = out.splitlines()
-    ok = (not error and len(lines) == 11 and lines[-1] == "CHECK_COMPLETE"
+    ok = (not error and len(lines) == 12 and lines[-1] == "CHECK_COMPLETE"
           and all(line.startswith("PASS ") for line in lines[:-1]))
     return ok, f"配置={config_path}; " + "; ".join(lines) + (f"; {error}" if error else "")
 

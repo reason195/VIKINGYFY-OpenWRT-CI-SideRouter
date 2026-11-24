@@ -86,19 +86,22 @@ class SyncPackagesTest(unittest.TestCase):
         self.assertEqual(self.run_sync(self.source.as_posix()).returncode, 0)
         self.assertEqual(self.snapshot(), first)
 
-    def test_conflict_stops_without_partial_application(self):
+    def test_conflict_skips_without_partial_application(self):
         target = self.source / self.recipes[-1]
         target.write_text("different upstream version\n", encoding="utf-8", newline="\n")
         before = self.snapshot()
         result = self.run_sync(self.source.as_posix())
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn("跳过", result.stdout.decode())
         self.assertEqual(self.snapshot(), before)
 
-    def test_partially_updated_tree_is_not_silently_accepted(self):
+    def test_partially_updated_tree_skips_without_partial_application(self):
         target = self.source / self.recipes[0]
         target.write_bytes(target.read_bytes().replace(b":=old\n", b":=new\n"))
         before = self.snapshot()
-        self.assertNotEqual(self.run_sync(self.source.as_posix()).returncode, 0)
+        result = self.run_sync(self.source.as_posix())
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn("跳过", result.stdout.decode())
         self.assertEqual(self.snapshot(), before)
 
     def test_missing_patch_fails_without_changes(self):

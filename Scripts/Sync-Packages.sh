@@ -5,6 +5,11 @@ SOURCE_DIR="${1:?请指定 OpenWrt 源码目录}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PATCH_FILE="$SCRIPT_DIR/patches/immortalwrt-base-packages.patch"
 
+if [ ! -f "$PATCH_FILE" ]; then
+	printf 'ERROR: 找不到补丁文件 %s\n' "$PATCH_FILE" >&2
+	exit 1
+fi
+
 if git -C "$SOURCE_DIR" apply --reverse --check "$PATCH_FILE" 2>/dev/null; then
 	printf '%s\n' '基础软件包更新已应用'
 	exit 0

@@ -24,7 +24,7 @@ DNS_SERVERS = (
 SUBSCRIPTION_PATH = "/etc/openclash/config/MihomoPro.yaml"
 RUNTIME_PATH = "/etc/openclash/MihomoPro.yaml"
 PASS_LINES = (
-    "PASS global-client-fingerprint",
+    "PASS client-fingerprint",
     "PASS dns.cache-size",
     "PASS dns.listen",
     "PASS dns.respect-rules",
@@ -32,6 +32,7 @@ PASS_LINES = (
     "PASS dns.default-nameserver",
     "PASS dns.fake-ip-filter",
     "PASS dns.nameserver-policy",
+    "PASS dns.nameserver-policy.google-play",
     "PASS proxy-groups.default-auto",
     "PASS proxy-groups.auto-select",
 )

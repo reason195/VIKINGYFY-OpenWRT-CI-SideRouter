@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import shlex
@@ -46,7 +47,6 @@ class OverwriteHookTest(unittest.TestCase):
     def assert_calls(self, content):
         calls, config = self.run_hook(content)
         self.assertEqual(calls, [
-            ["ruby_edit", config, "['global-client-fingerprint']", '"chrome"'],
             ["ruby_edit", config, "['dns']['cache-size']", '"4096".to_i'],
             ["ruby_edit", config, "['dns']['listen']", '"127.0.0.1:7874"'],
         ])
@@ -113,6 +113,66 @@ class OverwriteHookTest(unittest.TestCase):
             groups = {g["name"]: g for g in data["proxy-groups"]}
             self.assertNotIn("default-selected", groups["国内流量"])
             self.assertNotIn("default-selected", groups["国外流量"])
+
+    def test_removes_global_fingerprint_and_sets_provider_override(self):
+        """功能验证：移除顶层 global-client-fingerprint，并为 proxy-providers 注入 override.client-fingerprint。"""
+        if not shutil.which("ruby"):
+            self.skipTest("requires ruby")
+        config = (
+            "global-client-fingerprint: firefox\n"
+            "proxy-providers:\n"
+            "  主订阅:\n"
+            "    type: http\n"
+            "    url: https://example.com/sub\n"
+            "  自定义指纹:\n"
+            "    type: http\n"
+            "    url: https://example.com/sub2\n"
+            "    override:\n"
+            "      client-fingerprint: safari\n"
+            "proxy-groups:\n"
+            "  - {name: 默认代理, type: select, proxies: [香港策略, 美国策略, 直接连接]}\n"
+            "  - {name: 美国自动, type: url-test, proxies: [US-1]}\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "config.yaml"
+            config_path.write_text(config, encoding="utf-8")
+            helper = root / "ruby.sh"
+            helper.write_text("ruby_edit() { :; }\n", encoding="utf-8")
+            yaml_shim = root / "oc_yaml_shim.rb"
+            yaml_shim.write_text(
+                "module OcYamlDump\n"
+                "  def dump(obj, io = nil)\n"
+                "    return File.write(io, super(obj)) if io.is_a?(String)\n"
+                "    super\n"
+                "  end\n"
+                "end\n"
+                "YAML.singleton_class.prepend(OcYamlDump)\n",
+                encoding="utf-8",
+            )
+            script = root / "hook.sh"
+            source = TARGET.read_text(encoding="utf-8")
+            source = source.replace("/usr/share/openclash/ruby.sh", shlex.quote(helper.as_posix()))
+            source = source.replace("-rYAML -I /usr/share/openclash",
+                                    f"-r{shlex.quote(yaml_shim.as_posix())}")
+            script.write_text(source, encoding="utf-8")
+            result = subprocess.run(
+                [shutil.which("sh"), script.as_posix(), config_path.as_posix()],
+                capture_output=True, timeout=20,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            dumped = subprocess.run(
+                [shutil.which("ruby"), "-ryaml", "-rjson", "-e",
+                 "puts JSON.generate(YAML.load_file(ARGV[0]))", config_path.as_posix()],
+                capture_output=True, text=True, timeout=10, check=True,
+            )
+            data = json.loads(dumped.stdout)
+            self.assertNotIn("global-client-fingerprint", data)
+            self.assertEqual(data["proxy-providers"]["主订阅"]["override"]["client-fingerprint"], "chrome")
+            self.assertEqual(data["proxy-providers"]["自定义指纹"]["override"]["client-fingerprint"], "safari")
+            groups = {g["name"]: g for g in data["proxy-groups"]}
+            self.assertEqual(groups["默认代理"]["proxies"][0], "美国优先")
+            self.assertEqual(groups["美国优先"]["proxies"], ["美国自动", "自动选择"])
 
 
 if __name__ == "__main__":

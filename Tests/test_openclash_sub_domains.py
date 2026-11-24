@@ -61,22 +61,59 @@ class SubscriptionDomainTest(unittest.TestCase):
             self.assertIn("+.tohno-0.top", text, path)
             self.assertIn("+.de5.net", text, path)
 
+    @staticmethod
+    def _parse_policy_entries(text):
+        """解析 nameserver-policy 非注释行为 [(keys, servers), ...]，保持原始键序。"""
+        entries = []
+        current_servers = None
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if not raw[0].isspace() and line.endswith(":"):
+                key = line[:-1].strip().strip('"\'')
+                keys = tuple(k.strip() for k in key.split(",") if k.strip())
+                current_servers = []
+                entries.append((keys, current_servers))
+            elif line.startswith("- ") and current_servers is not None:
+                current_servers.append(line[2:].strip().strip('"\''))
+        return entries
+
+    @staticmethod
+    def _matches_policy_key(host, pattern):
+        if pattern.startswith("+."):
+            suffix = pattern[2:]
+            return host == suffix or host.endswith("." + suffix)
+        return host == pattern
+
     def test_google_play_policy_precedes_geosite_cn(self):
         """Google Play 下载/跳转域名必须排在 geosite:cn 之前并走境外 DoH。"""
-        text = POLICY.read_text(encoding="utf-8")
-        cn_pos = text.index('"geosite:cn,private,apple":')
-        for domain in (
-            "+.services.googleapis.cn",
-            "+.googleapis.cn",
-            "+.xn--ngstr-lra8j.com",
-            "+.gvt1.com",
+        entries = self._parse_policy_entries(POLICY.read_text(encoding="utf-8"))
+        cn_idx = next(
+            (i for i, (keys, _) in enumerate(entries) if "geosite:cn" in keys),
+            None,
+        )
+        self.assertIsNotNone(cn_idx, "缺少 geosite:cn 策略条目")
+        for host in (
+            "services.googleapis.cn",
+            "googleapis.cn",
+            "redirector.xn--ngstr-lra8j.com",
+            "redirector.gvt1.com",
             "dl.google.com",
         ):
-            pos = text.index(domain)
-            self.assertLess(pos, cn_pos, f"{domain} 必须位于 geosite:cn 之前")
-        head = text[:cn_pos]
-        self.assertIn("https://dns.cloudflare.com/dns-query", head)
-        self.assertIn("https://dns.google/dns-query", head)
+            hit = next(
+                (
+                    (i, servers)
+                    for i, (keys, servers) in enumerate(entries)
+                    if any(self._matches_policy_key(host, k) for k in keys)
+                ),
+                None,
+            )
+            self.assertIsNotNone(hit, f"{host} 未命中任何 nameserver-policy 规则")
+            idx, servers = hit
+            self.assertLess(idx, cn_idx, f"{host} 必须位于 geosite:cn 之前")
+            self.assertIn("https://dns.cloudflare.com/dns-query", servers)
+            self.assertIn("https://dns.google/dns-query", servers)
 
     def test_extracts_only_proxy_provider_hosts(self):
         result = self.run_script()
