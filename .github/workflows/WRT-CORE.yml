@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Projects
-        uses: actions/checkout@main
+        uses: actions/checkout@v7
         with:
           # 完整克隆本仓库历史，release 提交变更统计（git log PREV_TAG..HEAD）依赖完整历史
           fetch-depth: 0
@@ -157,7 +157,7 @@ jobs:
       - name: Check Caches
         id: check-cache
         if: env.WRT_TEST != 'true'
-        uses: actions/cache@main
+        uses: actions/cache@v6
         with:
           key: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
           restore-keys: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}
@@ -334,7 +334,7 @@ jobs:
 
       - name: Upload Config (TEST)
         if: env.WRT_TEST == 'true'
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v7
         with:
           name: Config-${{env.WRT_CONFIG}}-${{env.WRT_DATE}}
           path: ./wrt/upload/
@@ -352,7 +352,7 @@ jobs:
 
       - name: Release Firmware
         if: env.WRT_TEST != 'true'
-        uses: softprops/action-gh-release@master
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_BRANCH}}-${{env.WRT_REF}}-${{env.WRT_DATE}}
           files: ./wrt/upload/*.*
