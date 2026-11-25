@@ -86,6 +86,54 @@ ruby -ryaml -rYAML -I /usr/share/openclash -E UTF-8 -e '
   tail = default["proxies"].include?("直接连接") ? ["直接连接"] : []
   default["proxies"] = [first] + members + ["自动选择"] + tail
 
+  # 备用策略：单独聚合「备用服务商」（独享节点），含自动测速「备用自动」与手动选节点，
+  # 并注入所有含「全球手动」的 select 策略组，方便将 GitHub/微软等服务一键切到独享节点。
+  if data["proxy-providers"].is_a?(Hash) && data["proxy-providers"].key?("备用服务商")
+    backup_auto = groups.find { |g| g.is_a?(Hash) && g["name"] == "备用自动" }
+    unless backup_auto
+      backup_auto = {
+        "name" => "备用自动",
+        "icon" => "https://github.com/Koolson/Qure/raw/master/IconSet/Color/Auto.png"
+      }
+      groups.push(backup_auto)
+    end
+    backup_auto["type"] = "url-test"
+    backup_auto["use"] = ["备用服务商"]
+    backup_auto["url"] = "https://www.google.com/generate_204"
+    backup_auto["interval"] = 180
+    backup_auto["tolerance"] = 50
+    backup_auto["timeout"] = 5000
+    backup_auto["lazy"] = false
+    backup_auto["hidden"] = true
+    backup_auto.delete("proxies")
+    backup_auto.delete("include-all")
+    backup_auto.delete("filter")
+
+    backup_select = groups.find { |g| g.is_a?(Hash) && g["name"] == "备用策略" }
+    unless backup_select
+      backup_select = {
+        "name" => "备用策略",
+        "icon" => "https://github.com/Koolson/Qure/raw/master/IconSet/Color/Server.png"
+      }
+      gm_idx = groups.index { |g| g.is_a?(Hash) && g["name"] == "全球手动" }
+      gm_idx ? groups.insert(gm_idx, backup_select) : groups.push(backup_select)
+    end
+    backup_select["type"] = "select"
+    backup_select["proxies"] = ["备用自动"]
+    backup_select["use"] = ["备用服务商"]
+    backup_select.delete("include-all")
+    backup_select.delete("filter")
+
+    groups.each do |g|
+      next unless g.is_a?(Hash) && g["type"] == "select" && g["proxies"].is_a?(Array)
+      next if g["name"] == "备用策略" || g["proxies"].include?("备用策略")
+      idx = g["proxies"].index("全球手动")
+      next unless idx
+      g["proxies"] = g["proxies"].dup
+      g["proxies"].insert(idx, "备用策略")
+    end
+  end
+
   YAML.dump(data, path)
 ' "$CONFIG_FILE" 2>/dev/null || true
 

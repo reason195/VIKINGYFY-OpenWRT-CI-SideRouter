@@ -173,6 +173,72 @@ class OverwriteHookTest(unittest.TestCase):
             groups = {g["name"]: g for g in data["proxy-groups"]}
             self.assertEqual(groups["默认代理"]["proxies"][0], "美国优先")
             self.assertEqual(groups["美国优先"]["proxies"], ["美国自动", "自动选择"])
+            self.assertNotIn("备用策略", groups)
+
+    def test_backup_provider_group_injected(self):
+        """功能验证：存在「备用服务商」时注入「备用策略/备用自动」并挂进含「全球手动」的 select 组。"""
+        if not shutil.which("ruby"):
+            self.skipTest("requires ruby")
+        config = (
+            "proxy-providers:\n"
+            "  优质服务商:\n"
+            "    type: http\n"
+            "    url: https://example.com/main\n"
+            "  备用服务商:\n"
+            "    type: http\n"
+            "    url: https://example.com/backup\n"
+            "proxy-groups:\n"
+            "  - {name: 默认代理, type: select, proxies: [香港策略, 美国策略, 全球手动, 直接连接]}\n"
+            "  - {name: 微软服务, type: select, proxies: [默认代理, 美国策略, 全球手动, 直接连接]}\n"
+            "  - {name: 国内流量, type: select, proxies: [直接连接, 全球手动]}\n"
+            "  - {name: 全球手动, type: select, include-all: true}\n"
+            "  - {name: 美国自动, type: url-test, proxies: [US-1]}\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "config.yaml"
+            config_path.write_text(config, encoding="utf-8")
+            helper = root / "ruby.sh"
+            helper.write_text("ruby_edit() { :; }\n", encoding="utf-8")
+            yaml_shim = root / "oc_yaml_shim.rb"
+            yaml_shim.write_text(
+                "module OcYamlDump\n"
+                "  def dump(obj, io = nil)\n"
+                "    return File.write(io, super(obj)) if io.is_a?(String)\n"
+                "    super\n"
+                "  end\n"
+                "end\n"
+                "YAML.singleton_class.prepend(OcYamlDump)\n",
+                encoding="utf-8",
+            )
+            script = root / "hook.sh"
+            source = TARGET.read_text(encoding="utf-8")
+            source = source.replace("/usr/share/openclash/ruby.sh", shlex.quote(helper.as_posix()))
+            source = source.replace("-rYAML -I /usr/share/openclash",
+                                    f"-r{shlex.quote(yaml_shim.as_posix())}")
+            script.write_text(source, encoding="utf-8")
+            result = subprocess.run(
+                [shutil.which("sh"), script.as_posix(), config_path.as_posix()],
+                capture_output=True, timeout=20,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            dumped = subprocess.run(
+                [shutil.which("ruby"), "-ryaml", "-rjson", "-e",
+                 "puts JSON.generate(YAML.load_file(ARGV[0]))", config_path.as_posix()],
+                capture_output=True, text=True, timeout=10, check=True,
+            )
+            data = json.loads(dumped.stdout)
+            groups = {g["name"]: g for g in data["proxy-groups"]}
+            self.assertEqual(groups["备用自动"]["type"], "url-test")
+            self.assertEqual(groups["备用自动"]["use"], ["备用服务商"])
+            self.assertEqual(groups["备用策略"]["type"], "select")
+            self.assertEqual(groups["备用策略"]["proxies"], ["备用自动"])
+            self.assertEqual(groups["备用策略"]["use"], ["备用服务商"])
+            for name in ("默认代理", "微软服务", "国内流量"):
+                self.assertIn("备用策略", groups[name]["proxies"])
+            self.assertEqual(groups["默认代理"]["proxies"][0], "美国优先")
+            self.assertEqual(groups["微软服务"]["proxies"][0], "默认代理")
+            self.assertEqual(groups["国内流量"]["proxies"][0], "直接连接")
 
 
 if __name__ == "__main__":
