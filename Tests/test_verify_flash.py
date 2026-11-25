@@ -343,6 +343,50 @@ class IdleServicesTest(OfflineTestCase):
                 self.assertIs(ok, False)
 
 
+class TailscalePanelFixTest(OfflineTestCase):
+    TS_FW_UCI = {
+        "firewall.ts_snat": "include",
+        "firewall.ts_snat.type": "script",
+        "firewall.ts_snat.path": "/etc/fw4-ts-snat.sh",
+    }
+
+    def check_ts(self, output, error="", fw_uci=None):
+        def uci_dump(pkg):
+            return dict(self.TS_FW_UCI if fw_uci is None else fw_uci) if pkg == "firewall" else {}
+
+        def run(command, timeout=15):
+            if "tailscale_helper" in command:
+                return output, error
+            return "", ""
+
+        with mock.patch.object(vf, "uci_dump", side_effect=uci_dump), \
+                mock.patch.object(vf, "run", side_effect=run):
+            results = [result for result in vf.check_uci_defaults()
+                       if result[0] == "96-tailscale-panel-fix.sh"]
+        self.assertEqual(len(results), 1)
+        return results[0][1:]
+
+    def test_in_skip_on_router(self):
+        self.assertIn("etc/uci-defaults/96-tailscale-panel-fix.sh", vf.SKIP_ON_ROUTER)
+
+    def test_all_patches_present(self):
+        ok, detail = self.check_ts("helper_ok\nsnat_exec_ok\nacl_ok\nCHECK_COMPLETE")
+        self.assertIs(ok, True)
+        self.assertIn("均已就位", detail)
+
+    def test_skips_when_panel_not_installed(self):
+        ok, detail = self.check_ts("SKIP_NO_PANEL\nCHECK_COMPLETE", fw_uci={})
+        self.assertIs(ok, True)
+        self.assertIn("跳过", detail)
+
+    def test_missing_patch_or_fw_include_fails(self):
+        ok, detail = self.check_ts("helper_missing\nsnat_exec_ok\nacl_missing\nCHECK_COMPLETE", fw_uci={})
+        self.assertIs(ok, False)
+        self.assertIn("TS_IP4", detail)
+        self.assertIn("firewall.ts_snat", detail)
+        self.assertIn("/sbin/logread", detail)
+
+
 class MainExitCodeTest(OfflineTestCase):
     def run_main(self, ruby_output):
         with mock.patch.object(sys, "argv", [str(SCRIPT)]), \

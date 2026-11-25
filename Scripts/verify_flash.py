@@ -47,6 +47,7 @@ SKIP_ON_ROUTER = {
     "etc/uci-defaults/93-buffy-openclash.sh",
     "etc/uci-defaults/94-buffy-credentials.sh",
     "etc/uci-defaults/95-buffy-idle-services.sh",
+    "etc/uci-defaults/96-tailscale-panel-fix.sh",
 }
 
 # 构建期会与软件包默认配置合并/追加的文件：路由器上可能多出重复块或追加的包用户行。
@@ -349,7 +350,8 @@ def check_uci_defaults():
                     f"listen_https={lh!r}(沿用软件包默认，仅记录)"))
 
     # 92-buffy-firewall.sh：硬件流卸载 + 清除引用已删除接口的 wan 区域/规则 + 清掉 fullcone 残留
-    d = uci_dump("firewall")
+    fw_uci = uci_dump("firewall")
+    d = fw_uci
     fo = d.get("firewall.@defaults[0].flow_offloading")
     foh = d.get("firewall.@defaults[0].flow_offloading_hw")
     fc6 = d.get("firewall.@defaults[0].fullcone6")
@@ -446,6 +448,35 @@ def check_uci_defaults():
     ok = not error and idle == "CHECK_COMPLETE"
     results.append(("95-buffy-idle-services.sh", ok,
                     "四项服务均未启用、未运行" if ok else f"停用服务检查异常: {idle}; {error}"))
+
+    # 96-tailscale-panel-fix.sh：Tailscale 面板包存在时，校验 helper 补丁、fw4 SNAT include 与日志页 ACL
+    ts_out, ts_err = run(
+        'if [ ! -x /usr/sbin/tailscale_helper ]; then echo SKIP_NO_PANEL; else '
+        'grep -q "TS_IP4=" /usr/sbin/tailscale_helper && echo helper_ok || echo helper_missing; '
+        'test -x /etc/fw4-ts-snat.sh && echo snat_exec_ok || echo snat_exec_missing; '
+        'if [ -f /usr/share/rpcd/acl.d/luci-app-tailscale.json ]; then '
+        'grep -q \'"/sbin/logread"\' /usr/share/rpcd/acl.d/luci-app-tailscale.json && echo acl_ok || echo acl_missing; '
+        'else echo acl_ok; fi; fi; echo CHECK_COMPLETE', timeout=15)
+    ts_lines = ts_out.splitlines()
+    if ts_err or not ts_lines or ts_lines[-1] != "CHECK_COMPLETE":
+        results.append(("96-tailscale-panel-fix.sh", False, f"检查异常: {ts_out}; {ts_err}"))
+    elif ts_lines[0] == "SKIP_NO_PANEL":
+        results.append(("96-tailscale-panel-fix.sh", True, "未安装 Tailscale 面板包，跳过"))
+    else:
+        ts_issues = []
+        if "helper_ok" not in ts_lines:
+            ts_issues.append("tailscale_helper 缺少 TS_IP4 补丁")
+        if "snat_exec_ok" not in ts_lines:
+            ts_issues.append("/etc/fw4-ts-snat.sh 不可执行")
+        if (fw_uci.get("firewall.ts_snat") != "include"
+                or fw_uci.get("firewall.ts_snat.type") != "script"
+                or fw_uci.get("firewall.ts_snat.path") != "/etc/fw4-ts-snat.sh"):
+            ts_issues.append("firewall.ts_snat include 缺失或配置不符")
+        if "acl_ok" not in ts_lines:
+            ts_issues.append("luci-app-tailscale ACL 缺少 /sbin/logread read 权限")
+        ok = not ts_issues
+        results.append(("96-tailscale-panel-fix.sh", ok,
+                        "helper 补丁、fw4 SNAT include 与日志页 ACL 均已就位" if ok else "; ".join(ts_issues)))
 
     return results
 
