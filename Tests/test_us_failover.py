@@ -23,9 +23,13 @@ class UsFailoverTest(unittest.TestCase):
         self.assertIn("check_group '美国策略'", text)
         self.assertIn("US-Oracle", text)
         self.assertIn("mkdir \"$LOCK\"", text)
+        self.assertIn("https%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204", text)
+        self.assertNotIn("www.cp.cloudflare.com", text)
+        self.assertIn("expected=204", text)
+        self.assertIn('"message":', text)
 
     def test_cron_registered(self):
-        self.assertIn("/usr/share/buffy/us_failover.sh", CRON.read_text(encoding="utf-8"))
+        self.assertIn("*/2 * * * * /usr/share/buffy/us_failover.sh", CRON.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

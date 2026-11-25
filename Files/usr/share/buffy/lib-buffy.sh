@@ -59,9 +59,9 @@ openclash_ready() { # $1=控制端口（默认 9090）
 proxy_204() {
 	[ "$(curl -m 10 -s -o /dev/null -w '%{http_code}' 'https://www.google.com/generate_204' 2>/dev/null)" = "204" ] && return 0
 	[ "$(curl -m 10 -s -o /dev/null -w '%{http_code}' 'https://www.gstatic.com/generate_204' 2>/dev/null)" = "204" ] && return 0
-	local p
-	for p in 7890 7891 7893; do
-		[ "$(curl -m 8 -s -o /dev/null -w '%{http_code}' -x "http://127.0.0.1:$p" 'https://www.google.com/generate_204' 2>/dev/null)" = "204" ] && return 0
+	local proxy
+	for proxy in http://127.0.0.1:7890 socks5h://127.0.0.1:7891 http://127.0.0.1:7893; do
+		[ "$(curl -m 8 -s -o /dev/null -w '%{http_code}' -x "$proxy" 'https://www.google.com/generate_204' 2>/dev/null)" = "204" ] && return 0
 	done
 	return 1
 }

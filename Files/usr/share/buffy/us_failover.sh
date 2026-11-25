@@ -10,7 +10,7 @@
 
 API='http://127.0.0.1:9090'
 LOG='/tmp/us_failover.log'
-TEST_URL='https%3A%2F%2Fwww.cp.cloudflare.com%2Fgenerate_204'
+TEST_URL='https%3A%2F%2Fcp.cloudflare.com%2Fgenerate_204'
 
 log() { echo "$(date '+%F %T') $*" >>"$LOG"; }
 
@@ -35,8 +35,10 @@ check_group() {
 		*) return 0 ;;
 	esac
 
-	_map="$(curl -s -m25 -H "$A" "$API/group/$2/delay?url=$TEST_URL&timeout=4000" 2>/dev/null)"
-	[ -n "$_map" ] || { log "$1: delay test empty, keep $_now"; return 0; }
+	_map="$(curl -s -m25 -H "$A" "$API/group/$2/delay?url=$TEST_URL&timeout=4000&expected=204" 2>/dev/null)"
+	case "$_map" in
+		''|*'"message":'*) log "$1: delay test empty/error, keep $_now"; return 0 ;;
+	esac
 
 	case "$_map" in
 		*"\"$_now\":"*) return 0 ;;
@@ -44,9 +46,9 @@ check_group() {
 
 	_target="$3"
 	if [ -z "$_target" ]; then
-		_target="$(printf '%s' "$_map" | tr ',' '\n' | grep -o '"[^"]*US-Oracle[^"]*"' | head -n1 | tr -d '"')"
+		_target="$(printf '%s' "$_map" | tr ',' '\n' | grep -o '"[^"]*US-Oracle[^"]*":[0-9]' | head -n1 | sed 's/":[0-9]$//; s/^"//')"
 	fi
-	[ -n "$_target" ] || _target="$(printf '%s' "$_map" | tr ',' '\n' | grep -o '"[^"]*"' | head -n1 | tr -d '"')"
+	[ -n "$_target" ] || _target="$(printf '%s' "$_map" | tr ',' '\n' | grep -o '"[^"]*":[0-9]' | head -n1 | sed 's/":[0-9]$//; s/^"//')"
 	[ -n "$_target" ] || { log "$1: no alive member, keep $_now"; return 0; }
 	[ "$_target" = "$_now" ] && return 0
 

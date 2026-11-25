@@ -439,15 +439,15 @@ def check_uci_defaults():
                     "（应由 94-buffy-credentials.sh enable 建立）"))
 
     idle, error = run(
-        'for s in wpad relayd radius odhcpd; do '
+        'for s in wpad relayd radius odhcpd router-tool; do '
         '[ -x "/etc/init.d/$s" ] || continue; '
         'if /etc/init.d/$s enabled; then echo "enabled=$s"; fi; '
         'done; '
-        'pidof wpad hostapd wpa_supplicant relayd radius radiusd odhcpd; '
+        'pidof wpad hostapd wpa_supplicant relayd radius radiusd odhcpd router-tool; '
         'echo CHECK_COMPLETE', timeout=20)
     ok = not error and idle == "CHECK_COMPLETE"
     results.append(("95-buffy-idle-services.sh", ok,
-                    "四项服务均未启用、未运行" if ok else f"停用服务检查异常: {idle}; {error}"))
+                    "五项服务均未启用、未运行" if ok else f"停用服务检查异常: {idle}; {error}"))
 
     # 96-tailscale-panel-fix.sh：Tailscale 面板包存在时，校验 helper 补丁、fw4 SNAT include 与日志页 ACL
     ts_out, ts_err = run(

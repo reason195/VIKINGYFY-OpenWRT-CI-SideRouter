@@ -38,11 +38,11 @@ PASS_LINES = (
 )
 PASS_OUTPUT = "\n".join((*PASS_LINES, "CHECK_COMPLETE"))
 IDLE_COMMAND = (
-    'for s in wpad relayd radius odhcpd; do '
+    'for s in wpad relayd radius odhcpd router-tool; do '
     '[ -x "/etc/init.d/$s" ] || continue; '
     'if /etc/init.d/$s enabled; then echo "enabled=$s"; fi; '
     'done; '
-    'pidof wpad hostapd wpa_supplicant relayd radius radiusd odhcpd; '
+    'pidof wpad hostapd wpa_supplicant relayd radius radiusd odhcpd router-tool; '
     'echo CHECK_COMPLETE'
 )
 
@@ -316,7 +316,7 @@ class IdleServicesTest(OfflineTestCase):
         self.assertIs(ok, True)
 
     def test_enabled_service_fails(self):
-        for service in ("wpad", "relayd", "radius", "odhcpd"):
+        for service in ("wpad", "relayd", "radius", "odhcpd", "router-tool"):
             with self.subTest(service=service):
                 ok, detail = self.check_idle(f"enabled={service}\nCHECK_COMPLETE")
                 self.assertIs(ok, False)
